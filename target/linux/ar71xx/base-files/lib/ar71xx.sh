@@ -903,6 +903,9 @@ ar71xx_board_detect() {
 	*"EmbWir-Dorin-Router")
 		name="ew-dorin-router"
 		;;
+	*"ENH1750EXT")
+		name="enh1750ext"
+		;;
 	*"ENS202EXT")
 		name="ens202ext"
 		;;
@@ -917,6 +920,9 @@ ar71xx_board_detect() {
 		;;
 	*"eTactica EG-200")
 		name="rme-eg200"
+		;;
+	*"EWS860AP")
+		name="ews860ap"
 		;;
 	*"FRITZ!Box 4020")
 		name="fritz4020"
