@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+#include "qca9558_engenius_ews860.dtsi"
+
+/ {
+	compatible = "engenius,enh1750ext", "qca,qca9557";
+	model = "Engenius ENH1750EXT";
+};
