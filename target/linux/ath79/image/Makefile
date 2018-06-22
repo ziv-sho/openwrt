@@ -70,6 +70,7 @@ ifeq ($(SUBTARGET),generic)
 include ./generic.mk
 include ./generic-tp-link.mk
 include ./generic-ubnt.mk
+include ./generic-senao.mk
 endif
 ifeq ($(SUBTARGET),nand)
 include ./nand.mk
