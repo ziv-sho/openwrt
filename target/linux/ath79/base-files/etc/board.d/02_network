@@ -24,7 +24,10 @@ ath79_setup_interfaces()
 		ucidef_add_switch "switch0" \
 			"0@eth0" "1:wan" "2:lan:3" "3:lan:2"
 		;;
-
+	"engenius,enh1750ext"|\
+	"engenius,ews860ap")
+		ucidef_set_interface_lan "eth0" "eth1"
+		;;
 	"glinet,ar150")
 		ucidef_set_interfaces_lan_wan "eth1" "eth0"
 		;;
