@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+#include "qca9557.dtsi"
+
+/ {
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x10000000>;
+	};
+
+	chosen {
+		bootargs = "console=ttyS0,115200n8";
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		wlan2g {
+			label = "engenius:green:wlan-2g";
+			gpios = <&gpio 14 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "phy0tpt";
+		};
+
+		wlan5g {
+			label = "engenius:green:wlan-5g";
+			gpios = <&gpio 15 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "phy1tpt";
+		};
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		reset {
+			label = "Reset button";
+			linux,code = <KEY_RESTART>;
+			gpios = <&gpio 21 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+};
+
+&uart {
+	status = "okay";
+};
+
+&gpio {
+	status = "okay";
+};
+
+&pcie0 {
+	status = "okay";
+};
+
+&spi {
+	status = "okay";
+	num-cs = <1>;
+
+	flash@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			uboot:	partition@0 {
+				label = "u-boot";
+				reg = <0x000000 0x040000>;
+				read-only;
+			};
+			
+			partition@40000 {
+				label = "u-boot-env";
+				reg = <0x040000 0x010000>;
+				read-only;
+			};
+
+			partition@50000 {
+				label = "custom";
+				reg = <0x050000 0x050000>;
+				read-only;
+			};
+
+			partition@a0000 {
+				label = "firmware";
+				reg = <0x0a0000 0xcd0000>;
+			};
+
+			partition@d70000 {
+				label = "failsafe";
+				reg = <0xd70000 0x280000>;
+				read-only;
+			};
+
+			partition@ff0000 {
+				label = "ART";
+				reg = <0xff0000 0x010000>;
+				read-only;
+			};
+		};
+	};
+};
+
+&mdio0 {
+	status = "okay";
+
+	phy1: ethernet-phy@1 {
+		reg = <1>;
+		phy-mode = "rgmii";
+	};
+};
+
+&mdio1 {
+	status = "okay";
+
+	phy2: ethernet-phy@2 {
+		reg = <2>;
+		phy-mode = "sgmii";
+	};
+};
+
+&eth0 {
+	status = "okay";
+
+	/*mtd-mac-address = <&uboot 0x1fc00>;
+	mtd-mac-address-increment = <1>;*/
+	phy-handle = <&phy1>;
+	phy-mode = "rgmii";
+
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+
+&eth1 {
+	status = "okay";
+
+	/*mtd-mac-address = <&uboot 0x1fc00>;*/
+	phy-handle = <&phy2>;
+	phy-mode = "sgmii";
+
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+
+&wmac {
+	status = "okay";
+	mtd-cal-data = <&art 0x1000>;
+	/*mtd-mac-address = <&uboot 0x1fc00>;*/
+};
