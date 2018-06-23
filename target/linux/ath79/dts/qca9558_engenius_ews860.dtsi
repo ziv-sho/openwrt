@@ -119,16 +119,21 @@
 		reg = <1>;
 		phy-mode = "rgmii";
 	};
-};
-
-&mdio1 {
-	status = "okay";
 
 	phy2: ethernet-phy@2 {
 		reg = <2>;
 		phy-mode = "sgmii";
 	};
 };
+
+/*&mdio1 {
+	status = "okay";
+
+	phy2: ethernet-phy@2 {
+		reg = <2>;
+		phy-mode = "sgmii";
+	};
+};*/
 
 &eth0 {
 	status = "okay";
