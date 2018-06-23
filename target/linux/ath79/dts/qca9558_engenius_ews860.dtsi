@@ -134,8 +134,7 @@
 	status = "okay";
 
 	pll-data = <0xa6000000 0xa0000101 0x80001313>;
-	/*mtd-mac-address = <&uboot 0x1fc00>;
-	mtd-mac-address-increment = <1>;*/
+	mtd-mac-address = <&art 0x0>;
 	phy-handle = <&phy1>;
 	phy-mode = "rgmii";
 
@@ -148,7 +147,7 @@
 &eth1 {
 	status = "okay";
 
-	/*mtd-mac-address = <&uboot 0x1fc00>;*/
+	mtd-mac-address = <&art 0x6>;
 	phy-handle = <&phy2>;
 	phy-mode = "sgmii";
 
@@ -161,5 +160,6 @@
 &wmac {
 	status = "okay";
 	mtd-cal-data = <&art 0x1000>;
-	/*mtd-mac-address = <&uboot 0x1fc00>;*/
+	mtd-mac-address = <&art 0x6>;
+	mtd-mac-address-increment = <1>;
 };
