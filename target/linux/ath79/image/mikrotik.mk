@@ -9,3 +9,10 @@ define Device/mikrotik
   IMAGE/sysupgrade.bin := sysupgrade-tar
 endef
 
+define Device/rb750p-pbr2
+  $(Device/mikrotik)
+  ATH_SOC := qca9533
+  DEVICE_TITLE := Mikrotik RouterBOARD RB750P-PBr2 (Powerbox)
+  SUPPORTED_DEVICES := mikrotik,rb750p-pbr2 rb750p-pbr2
+endef
+TARGET_DEVICES += rb750p-pbr2
