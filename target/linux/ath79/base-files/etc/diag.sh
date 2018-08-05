@@ -1,5 +1,6 @@
 #!/bin/sh
 
+. /lib/functions.sh
 . /lib/functions/leds.sh
 
 boot="$(get_dt_led boot)"
@@ -40,6 +41,8 @@ set_state() {
 			status_led="$running"
 			status_led_on
 		}
+		;;
+		esac
 		;;
 	esac
 }
