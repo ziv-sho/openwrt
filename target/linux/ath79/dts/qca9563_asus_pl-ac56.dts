@@ -118,8 +118,17 @@
 
 			partition@60000 {
 				label = "firmware";
-				reg = <0x060000 0x010000>;
+				reg = <0x060000 0xf20000>;
 			};
+
+			partition@f80000 {
+				label = "plc";
+				reg = <0xf80000 0x080000>;
+				read-only;
+			};
+		};
+	};
+};
 
 &mdio0 {
 	status = "okay";
@@ -145,7 +154,7 @@
 };
 
 &wmac {
-	status = "disabled";
-	mtd-mac-address = <&art 0x0>;
+	status = "okay";
+	//mtd-mac-address = <&art 0x0>;
 	mtd-cal-data = <&art 0x1000>;
 };
