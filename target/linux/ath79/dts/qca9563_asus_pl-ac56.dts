@@ -91,16 +91,16 @@
 		phy-mode = "rgmii";
 
 		qca,ar8327-initvals = <
-			0x0004 0x80000000 /* PAD0_MODE */
+			0x0004 0x80080080 /* PAD0_MODE */
 			0x0008 0x01000000 /* PAD5_MODE */
-			0x000c 0x7600000 /* PAD6_MODE */
-			0x0010 0x40000000 /* POWER_ON_STRIP */
+			0x000c 0x07600000 /* PAD6_MODE */
+			0x0010 0x602613a0 /* POWER_ON_STRIP */
 			0x0050 0xcc35cc35 /* LED_CTRL0 */
 			0x0054 0xca35ca35 /* LED_CTRL1 */
 			0x0058 0xc935c935 /* LED_CTRL2 */
-			0x005c 0x3ffff00 /* LED_CTRL3 */
-			0x007c 0x000007e /* PORT0_STATUS */
-			0x0094 0x000007e /* PORT6_STATUS */
+			0x005c 0x03ffff00 /* LED_CTRL3 */
+			0x007c 0x000000fe /* PORT0_STATUS */
+			0x0094 0x0000070e /* PORT6_STATUS */
 		>;
 	};
 
