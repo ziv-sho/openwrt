@@ -163,6 +163,6 @@
 
 &wmac {
 	status = "okay";
-	mtd-mac-address = <&factory 0x5006>;
+	mtd-mac-address = <&factory 0x1002>;
 	mtd-cal-data = <&factory 0x1000>;
 };
