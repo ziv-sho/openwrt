@@ -110,7 +110,7 @@
 				read-only;
 			};
 
-			partition@50000 {
+			factory: partition@50000 {
 				label = "Factory";
 				reg = <0x050000 0x010000>;
 				read-only;
@@ -153,8 +153,16 @@
 	};
 };
 
+&eth0 {
+	status = "okay";
+
+	phy-mode = "sgmii";
+	phy-handle = <&phy0>;
+	mtd-mac-address = <&factory 0x1002>;
+};
+
 &wmac {
 	status = "okay";
-	//mtd-mac-address = <&art 0x0>;
-	mtd-cal-data = <&art 0x1000>;
+	mtd-mac-address = <&factory 0x5006>;
+	mtd-cal-data = <&factory 0x1000>;
 };
