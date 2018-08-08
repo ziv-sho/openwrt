@@ -1,5 +1,13 @@
 include ./common-netgear.mk
 
+define Device/asus_pl-ac56
+  ATH_SOC := qca9563
+  DEVICE_TITLE := Asus PL-AC56
+  DEVICE_PACKAGES := kmod-ath10k ath10k-firmware-qca988x open-plc-utils
+  IMAGE_SIZE := 15488k
+  endef
+TARGET_DEVICES += asus_pl-ac56
+
 define Device/avm_fritz300e
   ATH_SOC := ar7242
   DEVICE_TITLE := AVM FRITZ!WLAN Repeater 300E
