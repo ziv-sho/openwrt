@@ -18,8 +18,6 @@ Signed-off-by: Miquel Raynal <miquel.raynal@bootlin.com>
  drivers/mtd/nand/raw/nand_toshiba.c | 88 +++++++++++++++++++++++++++++
  1 file changed, 88 insertions(+)
 
-diff --git a/drivers/mtd/nand/raw/nand_toshiba.c b/drivers/mtd/nand/raw/nand_toshiba.c
-index ab43f027cd23..8aec3fa6c5d9 100644
 --- a/drivers/mtd/nand/raw/nand_toshiba.c
 +++ b/drivers/mtd/nand/raw/nand_toshiba.c
 @@ -17,6 +17,89 @@
@@ -112,7 +110,7 @@ index ab43f027cd23..8aec3fa6c5d9 100644
  static void toshiba_nand_decode_id(struct nand_chip *chip)
  {
  	struct mtd_info *mtd = nand_to_mtd(chip);
-@@ -68,6 +151,11 @@ static int toshiba_nand_init(struct nand_chip *chip)
+@@ -68,6 +151,11 @@ static int toshiba_nand_init(struct nand
  	if (nand_is_slc(chip))
  		chip->bbt_options |= NAND_BBT_SCAN2NDPAGE;
  
@@ -124,6 +122,3 @@ index ab43f027cd23..8aec3fa6c5d9 100644
  	return 0;
  }
  
--- 
-2.20.1
-
