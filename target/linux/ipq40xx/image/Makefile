@@ -51,6 +51,12 @@ define Device/DniImage
 endef
 DEVICE_VARS += NETGEAR_BOARD_ID NETGEAR_HW_ID
 
+define Device/LegacyImage
+	KERNEL_SUFFIX := -uImage
+	KERNEL = kernel-bin | append-dtb | uImage none
+	KERNEL_NAME := zImage
+endef
+
 
 define Device/8dev_jalapeno
 	$(call Device/FitImage)
@@ -191,6 +197,20 @@ define Device/meraki_mr33
 	DEVICE_PACKAGES := -swconfig ath10k-firmware-qca9887-ct
 endef
 TARGET_DEVICES += meraki_mr33
+
+define Device/MikroTik
+  $(call Device/LegacyImage)
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+endef
+
+define Device/mikrotik_rb450gx4
+  $(Device/MikroTik)
+  DEVICE_DTS := qcom-ipq4019-rb450gx4
+  DEVICE_TITLE := MikroTik RouterBOARD RB450Gx4
+  DEVICE_PACKAGES += kmod-gpio-beeper
+endef
+TARGET_DEVICES += mikrotik_rb450gx4
 
 define Device/netgear_ex61x0v2
 	$(call Device/DniImage)
