@@ -212,36 +212,25 @@
 
 	mdio_pins: mdio_pinmux {
 		mux_1 {
-			pins = "gpio53";
+			pins = "gpio6";
 			function = "mdio";
 			bias-pull-up;
 		};
 		mux_2 {
-			pins = "gpio52";
+			pins = "gpio7";
 			function = "mdc";
 			bias-pull-up;
 		};
 	};
 
-	/*nand_pins: nand_pins {
-
-		pullups {
-			pins = "gpio52", "gpio53", "gpio58",
-				"gpio59";
-			function = "qpic";
-			bias-pull-up;
-		};
-
-		pulldowns {
-			pins = "gpio54", "gpio55", "gpio56",
-				"gpio57", "gpio60", "gpio61",
-				"gpio62", "gpio63", "gpio64",
-				"gpio65", "gpio66", "gpio67",
-				"gpio68", "gpio69";
-			function = "qpic";
-			bias-pull-down;
-		};
-	};*/
+	nand_pins: nand-pins {
+		pins = "gpio53", "gpio55", "gpio56",
+				"gpio57", "gpio58", "gpio59",
+				"gpio60", "gpio62", "gpio63",
+				"gpio64", "gpio65", "gpio66",
+				"gpio67", "gpio68", "gpio69";
+		function = "qpic";
+	};
 };
 
 &blsp_dma {
@@ -266,7 +255,7 @@
 
 			partition0@0 {
 				label = "RouterBoot";
-				reg = <0x00080000 0x000c0000>;
+				reg = <0x00080000 0x00040000>;
 				read-only;
 			};
 		};
@@ -278,7 +267,7 @@
 };
 
 &nand {
-	//pinctrl-0 = <&nand_pins>;
+	pinctrl-0 = <&nand_pins>;
 	pinctrl-names = "default";
 	status = "okay";
 
