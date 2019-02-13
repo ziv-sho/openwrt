@@ -47,10 +47,12 @@
 
 		mdio@90000 {
 			status = "okay";
+			pinctrl-0 = <&mdio_pins>;
+			pinctrl-names = "default";
 		};
 
 		ess-psgmii@98000 {
-			status = "okay";
+			status = "disabled";
 		};
 
 		counter@4a1000 {
@@ -106,16 +108,53 @@
 			status = "okay";
 		};
 
+		vccq_sd0: regulator@0 {
+			compatible = "qcom,regulator-ipq4019";
+			regulator-name = "SD0 VccQ";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <3000000>;
+			states = <3000000 0x3
+					  1800000 0x1>;
+			reg = <0x01948000 0x4>;
+			mask = <0x3>;
+			status = "disabled";
+		};
+
+		sdhci@7824000 {
+			compatible = "qcom,sdhci-msm-v4";
+			reg = <0x7824900 0x11c>, <0x7824000 0x800>;
+			interrupts = <0 123 0>, <0 138 0>;
+			interrupt-names = "hc_irq", "pwr_irq";
+			bus-width = <8>;
+			clocks = <&gcc GCC_SDCC1_APPS_CLK>, <&gcc GCC_SDCC1_AHB_CLK>, <&xo>;
+			clock-names = "core", "iface", "xo";
+			vqmmc-supply = <&vccq_sd0>;
+			cd-gpios = <&tlmm 22 GPIO_ACTIVE_LOW>;
+			sd-ldo-gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+			status = "disabled";
+		};
+
 		ess-switch@c000000 {
-			status = "okay";
+			status = "disabled";
 		};
 
 		edma@c080000 {
-			status = "okay";
+			status = "disabled";
+			qcom,num_gmac = <1>;
 		};
 	};
 
-	/*gpio-keys {
+	/*gpio-export {
+		compatible = "gpio-export";
+
+		gpio_poe_out {
+			gpio-export,name = "rb450gx4:sd:ldo";
+			gpio-export,output = <1>;
+			gpios = <&tlmm 33 GPIO_ACTIVE_HIGH>;
+		};
+	};*/
+
+	gpio-keys {
 		compatible = "gpio-keys";
 
 		reset {
@@ -123,22 +162,27 @@
 			gpios = <&tlmm 5 GPIO_ACTIVE_HIGH>;
 			linux,code = <KEY_RESTART >;
 		};
-	};*/
+	};
 
 	leds {
 		compatible = "gpio-leds";
 
 		power: power {
 			label = "rb450gx4:blue:power";
-			gpios = <&tlmm 0 GPIO_ACTIVE_LOW>;
+			gpios = <&tlmm 0 GPIO_ACTIVE_HIGH>;
 			default-state = "keep";
 			panic-indicator;
 		};
 
 		user: user {
 			label = "rb450gx4:green:user";
-			gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
+			gpios = <&tlmm 3 GPIO_ACTIVE_HIGH>;
 		};
+	};
+
+	beeper: beeper {
+			compatible = "gpio-beeper";
+			gpios = <&tlmm 2 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -146,38 +190,40 @@
 &tlmm {
 	serial_pins: serial_pinmux {
 		mux {
-			pins = "gpio60", "gpio61";
+			pins = "gpio16", "gpio17";
 			function = "blsp_uart0";
 			bias-disable;
 		};
 	};
 
-	spi_0_pins: spi_0_pinmux {
-		pin {
-			function = "blsp_spi0";
-			pins = "gpio54", "gpio55", "gpio56", "gpio57";
-			drive-strength = <2>;
-			bias-disable;
+	spi_0_pins: spi-0-pinmux {
+					pinmux {
+						function = "blsp_spi0";
+						pins = "gpio13", "gpio14", "gpio15";
+						bias-disable;
+					};
+					pinmux_cs {
+						function = "gpio";
+						pins = "gpio12";
+						bias-disable;
+						output-high;
+					};
+				};
+
+	mdio_pins: mdio_pinmux {
+		mux_1 {
+			pins = "gpio53";
+			function = "mdio";
+			bias-pull-up;
 		};
-		pin_cs {
-			function = "gpio";
-			pins = "gpio54";
-			drive-strength = <2>;
-			bias-disable;
-			output-high;
+		mux_2 {
+			pins = "gpio52";
+			function = "mdc";
+			bias-pull-up;
 		};
 	};
 
-	nand_pins: nand_pins {
-		/*
-		 * There are 18 pins. 15 pins are common between LCD and NAND.
-		 * The QPIC controller arbitrates between LCD and NAND. Of the
-		 * remaining 4, 2 are for NAND and 2 are for LCD exclusively.
-		 *
-		 * The meraki source hints that the bluetooth module claims
-		 * pin 52 as well. But sadly, there's no data whenever this
-		 * is a NAND or LCD exclusive pin or not.
-		 */
+	/*nand_pins: nand_pins {
 
 		pullups {
 			pins = "gpio52", "gpio53", "gpio58",
@@ -195,7 +241,7 @@
 			function = "qpic";
 			bias-pull-down;
 		};
-	};
+	};*/
 };
 
 &blsp_dma {
@@ -205,7 +251,7 @@
 &blsp1_spi1 {
 	pinctrl-0 = <&spi_0_pins>;
 	pinctrl-names = "default";
-	cs-gpios = <&tlmm 54 GPIO_ACTIVE_HIGH>;
+	cs-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 
 	m25p80@0 {
@@ -232,7 +278,7 @@
 };
 
 &nand {
-	pinctrl-0 = <&nand_pins>;
+	//pinctrl-0 = <&nand_pins>;
 	pinctrl-names = "default";
 	status = "okay";
 

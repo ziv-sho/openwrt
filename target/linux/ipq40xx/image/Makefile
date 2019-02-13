@@ -200,8 +200,8 @@ TARGET_DEVICES += meraki_mr33
 
 define Device/MikroTik
   $(call Device/LegacyImage)
-  BLOCKSIZE := 128k
-  PAGESIZE := 2048
+  BLOCKSIZE := 256k
+  PAGESIZE := 4096
 endef
 
 define Device/mikrotik_rb450gx4
