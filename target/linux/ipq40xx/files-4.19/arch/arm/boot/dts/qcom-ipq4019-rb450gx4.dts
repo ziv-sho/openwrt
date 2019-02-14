@@ -47,8 +47,8 @@
 
 		mdio@90000 {
 			status = "okay";
-			pinctrl-0 = <&mdio_pins>;
-			pinctrl-names = "default";
+			qcom,mdio_offset = <0x18>;
+			qcom,mdio_offset_limit = <0x5>;
 		};
 
 		ess-psgmii@98000 {
@@ -197,29 +197,17 @@
 	};
 
 	spi_0_pins: spi-0-pinmux {
-					pinmux {
-						function = "blsp_spi0";
-						pins = "gpio13", "gpio14", "gpio15";
-						bias-disable;
-					};
-					pinmux_cs {
-						function = "gpio";
-						pins = "gpio12";
-						bias-disable;
-						output-high;
-					};
-				};
-
-	mdio_pins: mdio_pinmux {
-		mux_1 {
-			pins = "gpio6";
-			function = "mdio";
-			bias-pull-up;
+		pinmux {
+			function = "blsp_spi0";
+			pins = "gpio13", "gpio14", "gpio15";
+			bias-disable;
 		};
-		mux_2 {
-			pins = "gpio7";
-			function = "mdc";
-			bias-pull-up;
+
+		pinmux_cs {
+			function = "gpio";
+			pins = "gpio12";
+			bias-disable;
+			output-high;
 		};
 	};
 
