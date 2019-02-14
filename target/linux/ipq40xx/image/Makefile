@@ -208,7 +208,7 @@ define Device/mikrotik_rb450gx4
   $(Device/MikroTik)
   DEVICE_DTS := qcom-ipq4019-rb450gx4
   DEVICE_TITLE := MikroTik RouterBOARD RB450Gx4
-  DEVICE_PACKAGES += kmod-gpio-beeper
+  DEVICE_PACKAGES += kmod-gpio-beeper -kmod-ath10k-ct -ath10k-firmware-qca4019-ct -wpad-basic
 endef
 TARGET_DEVICES += mikrotik_rb450gx4
 

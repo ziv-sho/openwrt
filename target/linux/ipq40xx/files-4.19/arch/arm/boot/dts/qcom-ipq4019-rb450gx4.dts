@@ -140,19 +140,19 @@
 
 		edma@c080000 {
 			status = "okay";
-			qcom,num_gmac = <1>;
+			//qcom,num_gmac = <1>;
 		};
 	};
 
-	/*gpio-export {
+	gpio-export {
 		compatible = "gpio-export";
 
 		gpio_poe_out {
-			gpio-export,name = "rb450gx4:sd:ldo";
-			gpio-export,output = <1>;
-			gpios = <&tlmm 33 GPIO_ACTIVE_HIGH>;
+			gpio-export,name = "rb450gx4:poe:out";
+			gpio-export,output = <0>;
+			gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
 		};
-	};*/
+	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
