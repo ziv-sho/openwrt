@@ -1,0 +1,40 @@
+From 093cc6808580af286cfdf1a2b250ef006737ce65 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robimarko@gmail.com>
+Date: Thu, 14 Feb 2019 10:52:45 +0100
+Subject: [PATCH] ipq40xx: Add MDIO fix for RB450Gx4
+
+This fixes networking on Mikrotik RB450Gx4, thanks to
+numerous hours of debugging by adron-s.
+In the end issue was that MDIOs were at completely different adress
+than standard
+---
+ mdio-ipq40xx.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/net/phy/mdio-ipq40xx.c b/drivers/net/phy/mdio-ipq40xx.c
+index 335d531..bffb2d3 100644
+--- a/drivers/net/phy/mdio-ipq40xx.c
++++ b/drivers/net/phy/mdio-ipq40xx.c
+@@ -71,6 +71,9 @@ static int ipq40xx_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
+ 	int value = 0;
+ 	unsigned int cmd = 0;
+ 
++	if(mii_id < 0x5)
++		mii_id += 0x18;
++
+ 	lockdep_assert_held(&bus->mdio_lock);
+ 
+ 	if (ipq40xx_mdio_wait_busy(am))
+@@ -100,6 +103,9 @@ static int ipq40xx_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
+ 	struct ipq40xx_mdio_data *am = bus->priv;
+ 	unsigned int cmd = 0;
+ 
++	if(mii_id < 0x5)
++		mii_id += 0x18;
++
+ 	lockdep_assert_held(&bus->mdio_lock);
+ 
+ 	if (ipq40xx_mdio_wait_busy(am))
+-- 
+2.20.1
+

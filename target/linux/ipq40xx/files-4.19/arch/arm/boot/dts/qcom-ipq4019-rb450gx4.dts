@@ -52,7 +52,7 @@
 		};
 
 		ess-psgmii@98000 {
-			status = "disabled";
+			status = "okay";
 		};
 
 		counter@4a1000 {
@@ -135,11 +135,11 @@
 		};
 
 		ess-switch@c000000 {
-			status = "disabled";
+			status = "okay";
 		};
 
 		edma@c080000 {
-			status = "disabled";
+			status = "okay";
 			qcom,num_gmac = <1>;
 		};
 	};
