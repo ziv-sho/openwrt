@@ -38,6 +38,7 @@
 		led-failsafe = &user;
 		led-running = &user;
 		led-upgrade = &user;
+		sdhc1 = &sdhc_1;
 	};
 
 	soc {
@@ -108,30 +109,20 @@
 			status = "okay";
 		};
 
-		vccq_sd0: regulator@0 {
-			compatible = "qcom,regulator-ipq4019";
-			regulator-name = "SD0 VccQ";
-			regulator-min-microvolt = <1800000>;
-			regulator-max-microvolt = <3000000>;
-			states = <3000000 0x3
-					  1800000 0x1>;
-			reg = <0x01948000 0x4>;
-			mask = <0x3>;
-			status = "disabled";
+		vccq_sd0: regulator@1948000 {
+			status = "okay";
 		};
 
-		sdhci@7824000 {
-			compatible = "qcom,sdhci-msm-v4";
-			reg = <0x7824900 0x11c>, <0x7824000 0x800>;
-			interrupts = <0 123 0>, <0 138 0>;
-			interrupt-names = "hc_irq", "pwr_irq";
-			bus-width = <8>;
-			clocks = <&gcc GCC_SDCC1_APPS_CLK>, <&gcc GCC_SDCC1_AHB_CLK>, <&xo>;
-			clock-names = "core", "iface", "xo";
+		sdhc_1: sdhci@7824900{
+			status = "okay";
+			qcom,bus-speed-mode = "HS200_1p8v", "DDR_1p8v";
+			qcom,clk-rates = <400000 25000000
+							  50000000 100000000
+							  192000000 384000000>;
 			vqmmc-supply = <&vccq_sd0>;
-			cd-gpios = <&tlmm 22 GPIO_ACTIVE_LOW>;
-			sd-ldo-gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
-			status = "disabled";
+			pinctrl-names = "default";
+			cd-gpios = <&tlmm 22 0x1>;
+			sd-ldo-gpios = <&tlmm 33 0x1>;
 		};
 
 		ess-switch@c000000 {
@@ -266,12 +257,12 @@
 
 			partition@0 {
 				label = "kernel";
-				reg = <0x00000000 0x00800000>;
+				reg = <0x00000000 0x1000000>;
 			};
 
-			partition@800000 {
+			partition@1000000 {
 				label = "rootfs";
-				reg = <0x00800000 0x1f800000>;
+				reg = <0x1000000 0x1f000000>;
 			};
 		};
 	};

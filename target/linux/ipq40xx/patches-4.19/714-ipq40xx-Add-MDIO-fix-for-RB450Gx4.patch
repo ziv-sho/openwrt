@@ -15,8 +15,6 @@ qcom,mdio_offset_limit to limit offset
  mdio-ipq40xx.c | 14 ++++++++++++++
  1 file changed, 14 insertions(+)
 
-diff --git a/drivers/net/phy/mdio-ipq40xx.c b/drivers/net/phy/mdio-ipq40xx.c
-index 335d531..8c9e1a0 100644
 --- a/drivers/net/phy/mdio-ipq40xx.c
 +++ b/drivers/net/phy/mdio-ipq40xx.c
 @@ -20,6 +20,7 @@
@@ -36,7 +34,7 @@ index 335d531..8c9e1a0 100644
  };
  
  static int ipq40xx_mdio_wait_busy(struct ipq40xx_mdio_data *am)
-@@ -71,6 +74,9 @@ static int ipq40xx_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
+@@ -71,6 +74,9 @@ static int ipq40xx_mdio_read(struct mii_
  	int value = 0;
  	unsigned int cmd = 0;
  
@@ -46,7 +44,7 @@ index 335d531..8c9e1a0 100644
  	lockdep_assert_held(&bus->mdio_lock);
  
  	if (ipq40xx_mdio_wait_busy(am))
-@@ -100,6 +106,9 @@ static int ipq40xx_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
+@@ -100,6 +106,9 @@ static int ipq40xx_mdio_write(struct mii
  	struct ipq40xx_mdio_data *am = bus->priv;
  	unsigned int cmd = 0;
  
@@ -56,7 +54,7 @@ index 335d531..8c9e1a0 100644
  	lockdep_assert_held(&bus->mdio_lock);
  
  	if (ipq40xx_mdio_wait_busy(am))
-@@ -126,6 +135,7 @@ static int ipq40xx_mdio_probe(struct platform_device *pdev)
+@@ -126,6 +135,7 @@ static int ipq40xx_mdio_probe(struct pla
  {
  	struct ipq40xx_mdio_data *am;
  	struct resource *res;
@@ -64,7 +62,7 @@ index 335d531..8c9e1a0 100644
  	int i;
  
  	am = devm_kzalloc(&pdev->dev, sizeof(*am), GFP_KERNEL);
-@@ -138,6 +148,10 @@ static int ipq40xx_mdio_probe(struct platform_device *pdev)
+@@ -138,6 +148,10 @@ static int ipq40xx_mdio_probe(struct pla
  		return -ENXIO;
  	}
  
@@ -75,6 +73,3 @@ index 335d531..8c9e1a0 100644
  	am->membase = devm_ioremap_resource(&pdev->dev, res);
  	if (IS_ERR(am->membase)) {
  		dev_err(&pdev->dev, "unable to ioremap registers\n");
--- 
-2.20.1
-
