@@ -46,7 +46,8 @@ zyxel_do_upgrade() {
 
 platform_do_upgrade() {
 	case "$(board_name)" in
-	8dev,jalapeno)
+	8dev,jalapeno |\
+	mikrotik,rb450gx4)
 		nand_do_upgrade "$ARGV"
 		;;
 	asus,map-ac2200)

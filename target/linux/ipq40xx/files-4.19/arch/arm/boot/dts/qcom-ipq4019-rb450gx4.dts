@@ -21,7 +21,7 @@
 #include <dt-bindings/soc/qcom,tcsr.h>
 
 / {
-	model = "Mikrotik RB450Gx4";
+	model = "Mikrotik RouterBOARD RB450Gx4";
 	compatible = "mikrotik,rb450gx4";
 
 	memory {
@@ -122,7 +122,7 @@
 			vqmmc-supply = <&vccq_sd0>;
 			pinctrl-names = "default";
 			cd-gpios = <&tlmm 22 0x1>;
-			sd-ldo-gpios = <&tlmm 33 0x1>;
+			//sd-ldo-gpios = <&tlmm 33 0x1>;
 		};
 
 		ess-switch@c000000 {
@@ -141,6 +141,16 @@
 			gpio-export,name = "rb450gx4:poe:out";
 			gpio-export,output = <0>;
 			gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	gpio-export {
+		compatible = "gpio-export";
+
+		gpio_poe_out {
+			gpio-export,name = "rb450gx4:sd:ldo";
+			gpio-export,output = <1>;
+			gpios = <&tlmm 33 GPIO_ACTIVE_HIGH>;
 		};
 	};
 

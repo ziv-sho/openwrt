@@ -198,17 +198,16 @@ define Device/meraki_mr33
 endef
 TARGET_DEVICES += meraki_mr33
 
-define Device/MikroTik
-  $(call Device/LegacyImage)
-  BLOCKSIZE := 256k
-  PAGESIZE := 4096
-endef
-
 define Device/mikrotik_rb450gx4
-  $(Device/MikroTik)
+  $(Device/FitImageLzma)
+  $(call Device/UbiFit)
   DEVICE_DTS := qcom-ipq4019-rb450gx4
   DEVICE_TITLE := MikroTik RouterBOARD RB450Gx4
+  BLOCKSIZE := 256k
+  PAGESIZE := 4096
   DEVICE_PACKAGES += kmod-gpio-beeper -kmod-ath10k-ct -ath10k-firmware-qca4019-ct -wpad-basic
+  IMAGES += rootfs.bin
+  IMAGE/rootfs.bin := append-rootfs | pad-rootfs
 endef
 TARGET_DEVICES += mikrotik_rb450gx4
 
