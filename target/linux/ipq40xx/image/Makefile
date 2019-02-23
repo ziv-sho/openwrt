@@ -14,6 +14,22 @@ define Device/Default
 	IMAGE/sysupgrade.bin/squashfs :=
 endef
 
+define Build/aux-loader-common
+	rm -rf $@.src
+	$(MAKE) -C aux-loader \
+		PKG_BUILD_DIR="$@.src" \
+		TARGET_DIR="$(dir $@)" LOADER_NAME="$(notdir $@)" \
+		BOARD="$(BOARDNAME)" PLATFORM="$(PLATFORM)" \
+		BLOCKSIZE="$(BLOCKSIZE)" PAGESIZE="$(PAGESIZE)" \
+		$(1) LOADER_TYPE=$(2) compile loader.$(2)
+	mv "$@.$(2)" "$@"
+	rm -rf $@.src
+endef
+
+define Build/aux-loader-kernel
+	$(call Build/aux-loader-common,LOADER_DATA="$@",$(1))
+endef
+
 define Device/FitImage
 	KERNEL_SUFFIX := -fit-uImage.itb
 	KERNEL = kernel-bin | gzip | fit gzip $$(DTS_DIR)/$$(DEVICE_DTS).dtb
@@ -198,16 +214,27 @@ define Device/meraki_mr33
 endef
 TARGET_DEVICES += meraki_mr33
 
+define Device/Mikrotik
+	$(call Device/FitImageLzma)
+	BLOCKSIZE := 256k
+	PAGESIZE := 4096
+	KERNEL_INITRAMFS_SUFFIX := -fit-uImage.elf
+	PLATFORM := mikrotik-ipq4xxx
+	KERNEL_INITRAMFS = $$(KERNEL) | aux-loader-kernel elf
+	IMAGES := sysupgrade.bin
+	IMAGE/sysupgrade.bin/squashfs := append-kernel | aux-loader-kernel ubi | \
+		sysupgrade-tar kernel=$$$$@ | append-metadata
+endef
+
 define Device/mikrotik_rb450gx4
-  $(Device/FitImageLzma)
-  $(call Device/UbiFit)
-  DEVICE_DTS := qcom-ipq4019-rb450gx4
-  DEVICE_TITLE := MikroTik RouterBOARD RB450Gx4
-  BLOCKSIZE := 256k
-  PAGESIZE := 4096
-  DEVICE_PACKAGES += kmod-gpio-beeper -kmod-ath10k-ct -ath10k-firmware-qca4019-ct -wpad-basic
-  IMAGES += rootfs.bin
-  IMAGE/rootfs.bin := append-rootfs | pad-rootfs
+	$(call Device/Mikrotik)
+	DEVICE_DTS := qcom-ipq4019-rb450gx4
+	DEVICE_TITLE := MikroTik RouterBOARD RB450Gx4
+	BLOCKSIZE := 256k
+	PAGESIZE := 4096
+	DEVICE_PACKAGES += kmod-gpio-beeper -kmod-ath10k-ct -ath10k-firmware-qca4019-ct -wpad-basic
+	IMAGES += rootfs.bin
+	IMAGE/rootfs.bin := append-rootfs | pad-rootfs
 endef
 TARGET_DEVICES += mikrotik_rb450gx4
 
