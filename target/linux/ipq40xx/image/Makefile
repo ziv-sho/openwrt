@@ -14,6 +14,22 @@ define Device/Default
 	IMAGE/sysupgrade.bin/squashfs :=
 endef
 
+define Build/ipq-aux-loader-common
+	rm -rf $@.src
+	$(MAKE) -C ipq-aux-loader \
+		PKG_BUILD_DIR="$@.src" \
+		TARGET_DIR="$(dir $@)" LOADER_NAME="$(notdir $@)" \
+		BOARD="$(BOARDNAME)" PLATFORM="$(PLATFORM)" \
+		BLOCKSIZE="$(BLOCKSIZE)" PAGESIZE="$(PAGESIZE)" \
+		$(1) LOADER_TYPE=$(2) compile loader.$(2)
+	mv "$@.$(2)" "$@"
+	rm -rf $@.src
+endef
+
+define Build/ipq-aux-loader-kernel
+	$(call Build/ipq-aux-loader-common,LOADER_DATA="$@",$(1))
+endef
+
 define Device/FitImage
 	KERNEL_SUFFIX := -fit-uImage.itb
 	KERNEL = kernel-bin | gzip | fit gzip $$(DTS_DIR)/$$(DEVICE_DTS).dtb
@@ -50,6 +66,12 @@ define Device/DniImage
 	IMAGE/sysupgrade.bin := append-kernel | pad-offset 64k 64 | append-uImage-fakehdr filesystem | append-rootfs | pad-rootfs | append-metadata
 endef
 DEVICE_VARS += NETGEAR_BOARD_ID NETGEAR_HW_ID
+
+define Device/LegacyImage
+	KERNEL_SUFFIX := -uImage
+	KERNEL = kernel-bin | append-dtb | uImage none
+	KERNEL_NAME := zImage
+endef
 
 
 define Device/8dev_jalapeno
@@ -215,6 +237,22 @@ define Device/meraki_mr33
 	DEVICE_PACKAGES := -swconfig ath10k-firmware-qca9887-ct
 endef
 TARGET_DEVICES += meraki_mr33
+
+define Device/MikrotikNOR
+	$(call Device/FitImageLzma)
+	KERNEL_INITRAMFS_SUFFIX := -fit-uImage.elf
+	PLATFORM := mikrotik-ipq4xxx
+	KERNEL_INITRAMFS = $$(KERNEL) | ipq-aux-loader-kernel elf
+	DEVICE_PACKAGES := rbcfg
+endef
+
+define Device/mikrotik_rblhgg-60ad
+	$(call Device/MikrotikNOR)
+	DEVICE_DTS := qcom-ipq4019-lhgg-60ad
+	DEVICE_TITLE := MikroTik RouterBOARD LHGG-60ad
+	DEVICE_PACKAGES += -kmod-ath10k-ct -ath10k-firmware-qca4019-ct kmod-wil6210
+endef
+TARGET_DEVICES += mikrotik_rblhgg-60ad
 
 define Device/netgear_ex61x0v2
 	$(call Device/DniImage)

@@ -42,6 +42,7 @@ ipq40xx_setup_interfaces()
 		;;
 	engenius,eap1300|\
 	meraki,mr33|\
+	mikrotik,lhgg-60ad|\
 	netgear,ex6100v2|\
 	netgear,ex6150v2|\
 	zyxel,wre6606)
