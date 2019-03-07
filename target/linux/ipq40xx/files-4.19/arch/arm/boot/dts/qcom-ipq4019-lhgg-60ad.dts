@@ -108,16 +108,6 @@
 		};
 	};
 
-	/*gpio-export {
-		compatible = "gpio-export";
-
-		gpio_pcie_booster {
-			gpio-export,name = "lhgg-60ad:pcie:boost";
-			gpio-export,output = <1>;
-			gpios = <&tlmm 66 GPIO_ACTIVE_HIGH>;
-		};
-	};*/
-
 	keys {
 		compatible = "gpio-keys";
 
@@ -258,7 +248,8 @@
 
 &pcie0 {
 	status = "okay";
-	gpio-booster = <&tlmm 66 GPIO_ACTIVE_HIGH>;
+	booster-gpio = <&tlmm 66 GPIO_ACTIVE_HIGH>;
+	perst-gpio = <&tlmm 42 GPIO_ACTIVE_HIGH>;
 
 	bridge@0,0 {
 		reg = <0x00000000 0 0 0 0>;
