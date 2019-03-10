@@ -1,0 +1,63 @@
+From 1d6b9c81cb4ad7f4792b5e20f1f896d6cd48d842 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robimarko@gmail.com>
+Date: Fri, 8 Mar 2019 18:58:22 +0100
+Subject: [PATCH] Test MDIO offset theory
+
+Signed-off-by: Robert Marko <robimarko@gmail.com>
+---
+ mdio-ipq40xx.c | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/mdio-ipq40xx.c b/mdio-ipq40xx.c
+index 10e4f34..7d99ca2 100644
+--- a/drivers/net/phy/mdio-ipq40xx.c
++++ b/drivers/net/phy/mdio-ipq40xx.c
+@@ -73,10 +73,11 @@ static int ipq40xx_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
+ 	struct ipq40xx_mdio_data *am = bus->priv;
+ 	int value = 0;
+ 	unsigned int cmd = 0;
++	int i;
+ 
+-	if(mii_id < am->mdio_offset_limit)
+-			mii_id += am->mdio_offset;
+-			printk("mii_id: %d", mii_id);
++	for (i=0; i< 200;i++){
++			mii_id += am->mdio_offset;
++			printk("mii_id_read: %d", mii_id);
+ 
+ 	lockdep_assert_held(&bus->mdio_lock);
+ 
+@@ -98,6 +99,8 @@ static int ipq40xx_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
+ 	/* Read data */
+ 	value = readl(am->membase + MDIO_CTRL_3_REG);
+ 
++	};
++
+ 	return value;
+ }
+ 
+@@ -106,9 +109,11 @@ static int ipq40xx_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
+ {
+ 	struct ipq40xx_mdio_data *am = bus->priv;
+ 	unsigned int cmd = 0;
++	int i;
+ 
+-	if(mii_id < am->mdio_offset_limit)
+-			mii_id += am->mdio_offset;
++	for (i=0; i< 200;i++){
++			mii_id += am->mdio_offset;
++			//printk("mii_id_write: %d", mii_id);
+ 
+ 	lockdep_assert_held(&bus->mdio_lock);
+ 
+@@ -129,6 +134,8 @@ static int ipq40xx_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
+ 	if (ipq40xx_mdio_wait_busy(am))
+ 		return -ETIMEDOUT;
+ 
++	};
++
+ 	return 0;
+ }
+ 
+-- 
+2.20.1
