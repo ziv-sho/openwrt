@@ -47,12 +47,6 @@
 
 		mdio@90000 {
 			status = "okay";
-			/*qcom,mdio_offset = <0x72>;
-			qcom,mdio_offset_limit = <0x5>;*/
-		};
-
-		ess-psgmii@98000 {
-			status = "okay";
 		};
 
 		counter@4a1000 {
@@ -66,18 +60,10 @@
 			qcom,wifi_glb_cfg = <TCSR_WIFI_GLB_CFG>;
 		};
 
-		tcsr@194b000 {
-			/* select hostmode */
-			compatible = "qcom,tcsr";
-			reg = <0x194b000 0x100>;
-			qcom,usb-hsphy-mode-select = <TCSR_USB_HSPHY_HOST_MODE>;
-			status = "okay";
-		};
-
 		ess_tcsr@1953000 {
 			compatible = "qcom,tcsr";
 			reg = <0x1953000 0x1000>;
-			qcom,ess-interface-select = <TCSR_ESS_PSGMII>;
+			qcom,ess-interface-select = <TCSR_ESS_PSGMII_RGMII5>;
 		};
 
 		tcsr@1957000 {
@@ -102,9 +88,9 @@
 
 		edma@c080000 {
 			qcom,single-phy;
-			qcom,num_gmac = <1>;
+			qcom,num_gmac = <0>;
 			phy-mode = "rgmii-rxid";
-			status = "disabled";
+			status = "okay";
 		};
 	};
 
@@ -227,10 +213,10 @@
 				reg = <0xbd000 0x01000>;
 			};
 
-			partition4@c0000 {
-				compatible = "denx,fit";
+			partition4@1000000 {
+				/*compatible = "denx,fit";*/
 				label = "firmware";
-				reg = <0xc0000 0xf00000>;
+				reg = <0x100000 0xf00000>;
 			};
 		};
 	};
@@ -248,7 +234,6 @@
 
 &pcie0 {
 	status = "okay";
-	booster-gpio = <&tlmm 66 GPIO_ACTIVE_HIGH>;
 	perst-gpio = <&tlmm 42 GPIO_ACTIVE_HIGH>;
 
 	bridge@0,0 {
@@ -256,13 +241,18 @@
 		#address-cells = <3>;
 		#size-cells = <2>;
 		ranges;
+
+		/* wil6210 802.11ad card */
+		wifi: wifi@1,0 {
+			status = "okay";
+			/* wil6210 driver has no compatible */
+			reg = <0x00010000 0 0 0 0>;
+		};
 	};
 };
 
 &gmac0 {
 	qcom,phy_mdio_addr = <4>;
-	qcom,forced_duplex = <1>;
-	qcom,forced_speed = <1000>;
 	qcom,poll_required = <1>;
 	vlan_tag = <0 0x20>;
 };
