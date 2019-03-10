@@ -67,12 +67,6 @@ define Device/DniImage
 endef
 DEVICE_VARS += NETGEAR_BOARD_ID NETGEAR_HW_ID
 
-define Device/LegacyImage
-	KERNEL_SUFFIX := -uImage
-	KERNEL = kernel-bin | append-dtb | uImage none
-	KERNEL_NAME := zImage
-endef
-
 
 define Device/8dev_jalapeno
 	$(call Device/FitImage)
@@ -246,18 +240,18 @@ define Device/MikrotikNOR
 	PLATFORM := mikrotik-ipq4xxx
 	KERNEL = kernel-bin | lzma | fit lzma $$(DTS_DIR)/$$(DEVICE_DTS).dtb | ipq-aux-loader-kernel elf
 	IMAGES = sysupgrade.bin
-	IMAGE/sysupgrade.bin/squashfs := IMAGE/sysupgrade.bin := append-kernel | kernel2minor -s 1024 | pad-to $$$$(BLOCKSIZE) | \
+	IMAGE/sysupgrade.bin := append-kernel | kernel2minor -s 1024 | pad-to $$$$(BLOCKSIZE) | \
 	append-rootfs | pad-rootfs | append-metadata | check-size $$$$(IMAGE_SIZE)
 	DEVICE_PACKAGES := rbcfg
 endef
 
-define Device/mikrotik_rblhgg-60ad
+define Device/mikrotik_lhgg-60ad
 	$(call Device/MikrotikNOR)
 	DEVICE_DTS := qcom-ipq4019-lhgg-60ad
 	DEVICE_TITLE := MikroTik RouterBOARD LHGG-60ad
 	DEVICE_PACKAGES += -kmod-ath10k-ct -ath10k-firmware-qca4019-ct kmod-wil6210 rssileds
 endef
-TARGET_DEVICES += mikrotik_rblhgg-60ad
+TARGET_DEVICES += mikrotik_lhgg-60ad
 
 define Device/netgear_ex61x0v2
 	$(call Device/DniImage)
