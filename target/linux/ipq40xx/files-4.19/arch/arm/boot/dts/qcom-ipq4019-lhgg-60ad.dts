@@ -89,7 +89,7 @@
 		edma@c080000 {
 			qcom,single-phy;
 			qcom,num_gmac = <1>;
-			phy-mode = "rgmii-rxid";
+			phy-mode = "rgmii-id";
 			status = "okay";
 		};
 	};
@@ -149,7 +149,7 @@
 &tlmm {
 	serial_pins: serial_pinmux {
 		mux {
-			pins = "gpio16", "gpio17";
+			pins = "gpio60", "gpio61";
 			function = "blsp_uart0";
 			bias-disable;
 		};
@@ -214,7 +214,7 @@
 			};
 
 			partition4@1000000 {
-				/*compatible = "denx,fit";*/
+				compatible = "mikrotik,minor";
 				label = "firmware";
 				reg = <0x100000 0xf00000>;
 			};
