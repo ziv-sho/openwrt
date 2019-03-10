@@ -240,9 +240,14 @@ TARGET_DEVICES += meraki_mr33
 
 define Device/MikrotikNOR
 	$(call Device/FitImageLzma)
+	BLOCKSIZE := 64k
+	IMAGE_SIZE := 16128k
 	KERNEL_INITRAMFS_SUFFIX := -fit-uImage.elf
 	PLATFORM := mikrotik-ipq4xxx
-	KERNEL_INITRAMFS = $$(KERNEL) | ipq-aux-loader-kernel elf
+	KERNEL = kernel-bin | lzma | fit lzma $$(DTS_DIR)/$$(DEVICE_DTS).dtb | ipq-aux-loader-kernel elf
+	IMAGES = sysupgrade.bin
+	IMAGE/sysupgrade.bin/squashfs := IMAGE/sysupgrade.bin := append-kernel | kernel2minor -s 1024 | pad-to $$$$(BLOCKSIZE) | \
+	append-rootfs | pad-rootfs | append-metadata | check-size $$$$(IMAGE_SIZE)
 	DEVICE_PACKAGES := rbcfg
 endef
 
@@ -250,7 +255,7 @@ define Device/mikrotik_rblhgg-60ad
 	$(call Device/MikrotikNOR)
 	DEVICE_DTS := qcom-ipq4019-lhgg-60ad
 	DEVICE_TITLE := MikroTik RouterBOARD LHGG-60ad
-	DEVICE_PACKAGES += -kmod-ath10k-ct -ath10k-firmware-qca4019-ct kmod-wil6210
+	DEVICE_PACKAGES += -kmod-ath10k-ct -ath10k-firmware-qca4019-ct kmod-wil6210 rssileds
 endef
 TARGET_DEVICES += mikrotik_rblhgg-60ad
 
