@@ -115,28 +115,28 @@
 			gpios = <&tlmm 3 GPIO_ACTIVE_HIGH>;
 		};
 
-		rssi1 {
-			label = "rb450gx4:green:rssi1";
+		wlan {
+			label = "rb450gx4:green:wlan";
 			gpios = <&tlmm 58 GPIO_ACTIVE_HIGH>;
 		};
 
-		rssi2 {
-			label = "rb450gx4:green:rssi2";
+		align-left {
+			label = "rb450gx4:green:align-left";
 			gpios = <&tlmm 1 GPIO_ACTIVE_HIGH>;
 		};
 
-		rssi3 {
-			label = "rb450gx4:green:rssi3";
+		align-right {
+			label = "rb450gx4:green:align-right";
 			gpios = <&tlmm 2 GPIO_ACTIVE_HIGH>;
 		};
 
-		rssi4 {
-			label = "rb450gx4:green:rssi4";
+		wlan-rx {
+			label = "rb450gx4:green:wlan-rx";
 			gpios = <&tlmm 4 GPIO_ACTIVE_HIGH>;
 		};
 
-		rssi5 {
-			label = "rb450gx4:green:rssi5";
+		wlan-tx {
+			label = "rb450gx4:green:wlan-tx";
 			gpios = <&tlmm 5 GPIO_ACTIVE_HIGH>;
 		};
 	};
