@@ -49,7 +49,7 @@ platform_do_upgrade() {
 	8dev,jalapeno |\
 	avm,fritzbox-7530 |\
 	avm,fritzrepeater-3000 |\
-	mikrotik,rb450gx4)
+	mikrotik,rb450gx4|\
 	qxwlan,e2600ac-c2)
 		nand_do_upgrade "$1"
 		;;
