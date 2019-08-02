@@ -60,6 +60,15 @@
 			reg = <0x4a1000 0x4>;
 		};
 
+		vqmmc: regulator@1948000 {
+			compatible = "qcom,ipq40xx-vqmmc-regulator";
+			reg = <0x01948000 0x4>;
+			regulator-name = "vqmmc";
+			regulator-min-microvolt = <1500000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-always-on;
+		};
+
 		tcsr@1949000 {
 			compatible = "qcom,tcsr";
 			reg = <0x1949000 0x100>;
@@ -174,6 +183,28 @@
 				"gpio67", "gpio68", "gpio69";
 		function = "qpic";
 	};
+
+	sd_pins: sd_pins {
+		pinmux {
+			function = "sdio";
+			pins = "gpio23", "gpio24", "gpio25", "gpio26",
+				"gpio28", "gpio29", "gpio30", "gpio31";
+			drive-strength = <10>;
+		};
+
+		pinmux_sd_clk {
+			function = "sdio";
+			pins = "gpio27";
+			drive-strength = <16>;
+		};
+
+		pinmux_sd7 {
+			function = "sdio";
+			pins = "gpio32";
+			drive-strength = <10>;
+			bias-disable;
+		};
+	};
 };
 
 &blsp_dma {
@@ -265,3 +296,10 @@
 	status = "okay";
 };
 
+&sdhci {
+	pinctrl-0 = <&sd_pins>;
+	pinctrl-names = "default";
+	cd-gpios = <&tlmm 22 0x1>;
+	vqmmc-supply = <&vqmmc>;
+	status = "okay";
+};
