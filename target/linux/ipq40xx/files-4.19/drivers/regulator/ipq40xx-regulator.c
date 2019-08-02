@@ -71,7 +71,7 @@ static int ipq40xx_regulator_probe(struct platform_device *pdev)
 
 	rdev = devm_regulator_register(dev, &vmmc_regulator, &cfg);
 	if (IS_ERR(rdev)) {
-		dev_err(dev, "Failed to register regulator: %d\n",
+		dev_err(dev, "Failed to register regulator: %ld\n",
 			PTR_ERR(rdev));
 		return PTR_ERR(rdev);
 	}
