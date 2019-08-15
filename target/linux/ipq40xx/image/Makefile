@@ -309,6 +309,7 @@ TARGET_DEVICES += meraki_mr33
 
 define Device/MikrotikNAND
 	$(call Device/FitImageLzma)
+	DEVICE_VENDOR := MikroTik
 	BLOCKSIZE := 256k
 	PAGESIZE := 4096
 	KERNEL_INITRAMFS_SUFFIX := -fit-uImage.elf
@@ -322,9 +323,9 @@ endef
 
 define Device/mikrotik_rb450gx4
 	$(call Device/MikrotikNAND)
+	DEVICE_MODEL := RouterBOARD RB450Gx4
 	DEVICE_DTS := qcom-ipq4019-rb450gx4
 	AUX_LOADER_UART := 1
-	DEVICE_TITLE := MikroTik RouterBOARD RB450Gx4
 	DEVICE_PACKAGES += kmod-gpio-beeper -kmod-ath10k-ct -ath10k-firmware-qca4019-ct -wpad-basic
 endef
 TARGET_DEVICES += mikrotik_rb450gx4
