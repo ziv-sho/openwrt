@@ -674,6 +674,19 @@ define Device/librerouter_librerouter-v1
 endef
 TARGET_DEVICES += librerouter_librerouter-v1
 
+define Device/mikrotik_map-2nd
+  ATH_SOC := qca9533
+  DEVICE_VENDOR := MikroTik
+  DEVICE_MODEL := RBmAP2nD
+  IMAGE_SIZE := 16000k
+  KERNEL_INSTALL := 1
+  LOADER_TYPE := elf
+  DEVICE_PACKAGES := rbcfg
+  IMAGE/sysupgrade.bin := append-kernel | kernel2minor -s 1024 -e | pad-to $$$$(BLOCKSIZE) | \
+  append-rootfs | pad-rootfs | append-metadata | check-size $$$$(IMAGE_SIZE)
+endef
+TARGET_DEVICES += mikrotik_map-2nd
+
 define Device/nec_wg1200cr
   ATH_SOC := qca9563
   DEVICE_VENDOR := NEC

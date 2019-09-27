@@ -1,5 +1,5 @@
 BOARDNAME:=Generic
-FEATURES += squashfs
+FEATURES += squashfs minor
 
 DEFAULT_PACKAGES += wpad-basic
 

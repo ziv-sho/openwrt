@@ -180,6 +180,10 @@ ath79_setup_interfaces()
 		ucidef_add_switch "switch0" \
 			"0@eth0" "5:wan" "6@eth1" "4:lan"
 	;;
+	mikrotik,map-2nd)
+		ucidef_add_switch "switch0" \
+			"0@eth0" "1:wan" "2:lan"
+		;;
 	nec,wg1200cr|\
 	ubnt,nanostation-ac|\
 	ubnt,unifiac-mesh-pro|\
