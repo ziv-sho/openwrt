@@ -169,3 +169,21 @@ define Device/zyxel_nbg6716
 endef
 TARGET_DEVICES += zyxel_nbg6716
 DEVICE_VARS += RAS_ROOTFS_SIZE RAS_BOARD RAS_VERSION
+
+define Device/mikrotik
+  DEVICE_PACKAGES := kmod-usb-core kmod-usb-ohci kmod-usb2 kmod-usb-ledtrig-usbport rbcfg nand-utils
+  KERNEL_INITRAMFS := kernel-bin | append-dtb | lzma | loader-kernel
+  LOADER_TYPE := elf
+  KERNEL := kernel-bin | append-dtb | lzma | loader-kernel
+  IMAGES := sysupgrade.bin
+  IMAGE/sysupgrade.bin/squashfs = append-kernel | \
+  kernel2minor -s 2048 -e -c | sysupgrade-tar kernel=$$$$@ | append-metadata
+endef
+
+define Device/mikrotik_basebox-2
+  $(Device/mikrotik)
+  ATH_SOC := ar9342
+  DEVICE_VENDOR := MikroTik
+  DEVICE_MODEL := RouterBoard BaseBox 2
+endef
+TARGET_DEVICES += mikrotik_basebox-2
