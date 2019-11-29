@@ -64,8 +64,32 @@
 	};
 
 	nand@0 {
+		status = "okay";
+
 		compatible = "mikrotik,rb91x-nand";
 		gpios = <&gpio 13 0>, <&gpio 15 0>, <&gpio 14 0>, <&gpio 3 0>, <&gpio 12 0>, <&gpio 4 0>, <&gpio 11 0>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "booter";
+				reg = <0x000000 0x40000>;
+				read-only;
+			};
+
+			partition@40000 {
+				label = "kernel";
+				reg = <0x40000 0x3c0000>;
+			};
+
+			partition@400000 {
+				label = "ubi";
+				reg = <0x400000 0x7c00000>;
+			};
+		};
 	};
 };
 
@@ -159,7 +183,6 @@
 	status = "okay";
 
 	qca,no-eeprom;
-	//eeprom-name = "soc_wmac.eeprom";
 	mtd-mac-address = <&hard_config 0x10>;
 	mtd-mac-address-increment = <1>;
 };
