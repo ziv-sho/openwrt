@@ -13,6 +13,9 @@ case "$FIRMWARE" in
 	netgear,wndr4300)
 		caldata_extract "caldata" 0x1000 0x440
 		;;
+	mikrotik,basebox-2)
+		mikrotik_caldata_extract "hard_config" 0x1000 0x440
+		;;
 	zyxel,nbg6716)
 		caldata_extract "art" 0x1000 0x440
 		ath9k_patch_mac $(mtd_get_mac_ascii u-boot-env ethaddr)

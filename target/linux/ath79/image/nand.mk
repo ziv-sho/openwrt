@@ -171,7 +171,7 @@ TARGET_DEVICES += zyxel_nbg6716
 DEVICE_VARS += RAS_ROOTFS_SIZE RAS_BOARD RAS_VERSION
 
 define Device/mikrotik
-  DEVICE_PACKAGES := kmod-usb-core kmod-usb-ohci kmod-usb2 kmod-usb-ledtrig-usbport rbcfg nand-utils
+  DEVICE_PACKAGES := kmod-usb-core kmod-usb-ohci kmod-usb2 kmod-usb-ledtrig-usbport rbcfg nand-utils rbextract
   KERNEL_INITRAMFS := kernel-bin | append-dtb | lzma | loader-kernel
   LOADER_TYPE := elf
   KERNEL := kernel-bin | append-dtb | lzma | loader-kernel
