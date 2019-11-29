@@ -13,7 +13,7 @@ platform_do_upgrade_mikrotik_rb() {
 	fw_mtd="${fw_mtd/block/}"
 	[ -n "$fw_mtd" ] || return
 	mtd erase kernel
-	tar xf "$1" sysupgrade-mikrotik_basebox-2/kernel -O | nandwrite -o "$fw_mtd" -
+	tar xf "$1" sysupgrade-*/kernel -O | nandwrite -o "$fw_mtd" -
 
 	nand_do_upgrade "$1"
 }
