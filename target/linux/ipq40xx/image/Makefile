@@ -61,6 +61,24 @@ define Build/append-rootfshdr
 	dd if=$@.new bs=64 count=1 >> $(IMAGE_KERNEL)
 endef
 
+define Build/ipq-aux-loader-common
+	rm -rf $@.src
+	$(MAKE) -C ipq-aux-loader \
+		PKG_BUILD_DIR="$@.src" \
+		TARGET_DIR="$(dir $@)" LOADER_NAME="$(notdir $@)" \
+		TEXT_BASE2="0x00000000" \
+		BOARD="$(BOARDNAME)" PLATFORM="$(PLATFORM)" \
+		BLOCKSIZE="$(BLOCKSIZE)" PAGESIZE="$(PAGESIZE)" \
+		UART="$(AUX_LOADER_UART)" \
+		$(1) LOADER_TYPE=$(2) compile loader.$(2)
+	mv "$@.$(2)" "$@"
+	rm -rf $@.src
+endef
+
+define Build/ipq-aux-loader-kernel
+	$(call Build/ipq-aux-loader-common,LOADER_DATA="$@",$(1))
+endef
+
 define Build/mkmylofw_32m
 	$(eval device_id=$(word 1,$(1)))
 	$(eval revision=$(word 2,$(1)))
