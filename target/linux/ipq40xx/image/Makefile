@@ -516,6 +516,29 @@ define Device/meraki_mr33
 endef
 TARGET_DEVICES += meraki_mr33
 
+define Device/MikrotikNOR
+	$(call Device/FitImageLzma)
+	DEVICE_VENDOR := MikroTik
+	BLOCKSIZE := 64k
+	IMAGE_SIZE := 16128k
+	AUX_LOADER_UART := NONE
+	KERNEL_INITRAMFS_SUFFIX := -fit-uImage.elf
+	PLATFORM := mikrotik-ipq4xxx
+	KERNEL = kernel-bin | lzma | fit lzma $$(DTS_DIR)/$$(DEVICE_DTS).dtb | ipq-aux-loader-kernel elf
+	IMAGES = sysupgrade.bin
+	IMAGE/sysupgrade.bin := append-kernel | kernel2minor -s 1024 | pad-to $$$$(BLOCKSIZE) | \
+	append-rootfs | pad-rootfs | append-metadata | check-size $$$$(IMAGE_SIZE)
+	DEVICE_PACKAGES := rbcfg
+endef
+
+define Device/mikrotik_lhgg-60ad
+	$(call Device/MikrotikNOR)
+	DEVICE_MODEL := Wireless Wire Dish LHGG-60ad
+	SOC := qcom-ipq4019
+	DEVICE_PACKAGES := wil6210-firmware
+endef
+TARGET_DEVICES += mikrotik_lhgg-60ad
+
 define Device/mobipromo_cm520-79f
 	$(call Device/FitzImage)
 	$(call Device/UbiFit)
