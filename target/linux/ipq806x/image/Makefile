@@ -81,6 +81,18 @@ define Device/ZyXELImage
 	IMAGE/sysupgrade.bin/squashfs := append-rootfs | pad-to $$$$(BLOCKSIZE) | sysupgrade-tar rootfs=$$$$@ | append-metadata
 endef
 
+define Device/asrock_g10
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	SOC := qcom-ipq8064
+	DEVICE_VENDOR := ASRock
+	DEVICE_MODEL := G10
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	DEVICE_PACKAGES := ath10k-firmware-qca99x0-ct ipq-wifi-asrock_g10 kmod-hwmon-lm75
+endef
+TARGET_DEVICES += asrock_g10
+
 define Device/buffalo_wxr-2533dhp
 	$(call Device/LegacyImage)
 	SOC := qcom-ipq8064
