@@ -9,8 +9,6 @@ Signed-off-by: Robert Marko <robert.marko@sartura.hr>
  drivers/regulator/Makefile | 1 +
  2 files changed, 8 insertions(+)
 
-diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
-index 3ee63531f6d5..f87fd9007d42 100644
 --- a/drivers/regulator/Kconfig
 +++ b/drivers/regulator/Kconfig
 @@ -1105,5 +1105,12 @@ config REGULATOR_WM8994
@@ -26,17 +24,12 @@ index 3ee63531f6d5..f87fd9007d42 100644
 +
  endif
  
-diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
-index 2210ba56f9bd..2d76e878118e 100644
 --- a/drivers/regulator/Makefile
 +++ b/drivers/regulator/Makefile
-@@ -138,5 +138,6 @@ obj-$(CONFIG_REGULATOR_WM831X) += wm831x-ldo.o
+@@ -138,5 +138,6 @@ obj-$(CONFIG_REGULATOR_WM831X) += wm831x
  obj-$(CONFIG_REGULATOR_WM8350) += wm8350-regulator.o
  obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
  obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
 +obj-$(CONFIG_REGULATOR_NSS_VOLT) += nss-volt-ipq806x.o
  
  ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
--- 
-2.26.2
-

@@ -10,11 +10,9 @@ This reverts commit 0b24134f7888175c9638e6fd1900e23e44fc172f.
  .../pci/controller/dwc/pcie-designware-host.c    | 16 ----------------
  2 files changed, 24 deletions(-)
 
-diff --git a/drivers/pci/controller/dwc/pcie-designware-ep.c b/drivers/pci/controller/dwc/pcie-designware-ep.c
-index 3dd2e2697294..65f479250087 100644
 --- a/drivers/pci/controller/dwc/pcie-designware-ep.c
 +++ b/drivers/pci/controller/dwc/pcie-designware-ep.c
-@@ -498,7 +498,6 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
+@@ -498,7 +498,6 @@ int dw_pcie_ep_init(struct dw_pcie_ep *e
  	int ret;
  	u32 reg;
  	void *addr;
@@ -22,7 +20,7 @@ index 3dd2e2697294..65f479250087 100644
  	unsigned int nbars;
  	unsigned int offset;
  	struct pci_epc *epc;
-@@ -563,13 +562,6 @@ int dw_pcie_ep_init(struct dw_pcie_ep *ep)
+@@ -563,13 +562,6 @@ int dw_pcie_ep_init(struct dw_pcie_ep *e
  	if (ep->ops->ep_init)
  		ep->ops->ep_init(ep);
  
@@ -36,11 +34,9 @@ index 3dd2e2697294..65f479250087 100644
  	ret = of_property_read_u8(np, "max-functions", &epc->max_functions);
  	if (ret < 0)
  		epc->max_functions = 1;
-diff --git a/drivers/pci/controller/dwc/pcie-designware-host.c b/drivers/pci/controller/dwc/pcie-designware-host.c
-index 8615f1548882..45f21640c977 100644
 --- a/drivers/pci/controller/dwc/pcie-designware-host.c
 +++ b/drivers/pci/controller/dwc/pcie-designware-host.c
-@@ -324,7 +324,6 @@ int dw_pcie_host_init(struct pcie_port *pp)
+@@ -324,7 +324,6 @@ int dw_pcie_host_init(struct pcie_port *
  	struct pci_bus *child;
  	struct pci_host_bridge *bridge;
  	struct resource *cfg_res;
@@ -48,7 +44,7 @@ index 8615f1548882..45f21640c977 100644
  	int ret;
  
  	raw_spin_lock_init(&pci->pp.lock);
-@@ -466,21 +465,6 @@ int dw_pcie_host_init(struct pcie_port *pp)
+@@ -466,21 +465,6 @@ int dw_pcie_host_init(struct pcie_port *
  			goto err_free_msi;
  	}
  
@@ -70,6 +66,3 @@ index 8615f1548882..45f21640c977 100644
  	pp->root_bus_nr = pp->busn->start;
  
  	bridge->dev.parent = dev;
--- 
-2.26.2
-
