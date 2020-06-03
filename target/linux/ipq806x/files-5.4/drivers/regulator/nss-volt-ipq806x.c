@@ -20,7 +20,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include "nss-volt-ipq806x.h"
+#include <linux/regulator/nss-volt-ipq806x.h>
 
 static struct regulator *nss_reg;
 static u32 nss_core_vdd_nominal;
@@ -46,6 +46,8 @@ int nss_ramp_voltage(unsigned long rate, bool ramp_up)
 
 	uV = get_required_vdd_nss_core(rate);
 	curr_uV = regulator_get_voltage(nss_reg);
+
+	pr_info("NSS voltage is: %d\n", curr_uV);
 
 	if (ramp_up) {
 		if (uV > curr_uV) {
@@ -74,15 +76,29 @@ static const struct of_device_id nss_ipq806x_match_table[] = {
 static int nss_ipq806x_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node, *vdd;
+	int curr_uV;
 
 	if (!np)
 		return -ENODEV;
 
 	vdd = of_parse_phandle(np, "nss_core-supply", 0);
-	if (vdd)
-		nss_reg = regulator_get(NULL, vdd->name);
+	if (vdd) {
+		nss_reg = devm_regulator_get(&pdev->dev, vdd->name);
+		if (IS_ERR(nss_reg)) {
+			pr_err("NSS regulator_get error\n");
+			return -ENODEV;
+		}
+	}
 	else
 		return -ENODEV;
+
+	pr_warn("NSS nss_core-supply name: %s\n", vdd->name);
+
+	curr_uV = regulator_get_voltage(nss_reg);
+	if(curr_uV < 0) {
+		pr_warn("NSS regulator_get_voltage error: %d\n", curr_uV);
+		return -EPROBE_DEFER;
+	}
 
 	if (of_property_read_u32(np, "nss_core_vdd_nominal",
 					&nss_core_vdd_nominal)) {
@@ -118,7 +134,7 @@ static int __init nss_ipq806x_init(void)
 {
 	return platform_driver_register(&nss_ipq806x_driver);
 }
-device_initcall(nss_ipq806x_init);
+late_initcall(nss_ipq806x_init);
 
 static void __exit nss_ipq806x_exit(void)
 {
