@@ -47,8 +47,6 @@ int nss_ramp_voltage(unsigned long rate, bool ramp_up)
 	uV = get_required_vdd_nss_core(rate);
 	curr_uV = regulator_get_voltage(nss_reg);
 
-	pr_info("NSS voltage is: %d\n", curr_uV);
-
 	if (ramp_up) {
 		if (uV > curr_uV) {
 			ret = regulator_set_voltage(nss_reg, uV,
@@ -85,18 +83,16 @@ static int nss_ipq806x_probe(struct platform_device *pdev)
 	if (vdd) {
 		nss_reg = devm_regulator_get(&pdev->dev, vdd->name);
 		if (IS_ERR(nss_reg)) {
-			pr_err("NSS regulator_get error\n");
+			dev_err(&pdev->dev, "NSS regulator get error\n");
 			return -ENODEV;
 		}
 	}
 	else
 		return -ENODEV;
 
-	pr_warn("NSS nss_core-supply name: %s\n", vdd->name);
-
 	curr_uV = regulator_get_voltage(nss_reg);
 	if(curr_uV < 0) {
-		pr_warn("NSS regulator_get_voltage error: %d\n", curr_uV);
+		dev_warn(&pdev->dev, "NSS volt scaling defer probe\n");
 		return -EPROBE_DEFER;
 	}
 
