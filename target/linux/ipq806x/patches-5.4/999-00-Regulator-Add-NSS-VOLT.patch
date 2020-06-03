@@ -16,7 +16,7 @@ Signed-off-by: Robert Marko <robert.marko@sartura.hr>
  	  WM8994 CODEC.
  
 +config REGULATOR_NSS_VOLT
-+	boolean "Qualcomm IPQ806X NSS Voltage regulator"
++	bool "Qualcomm IPQ806X NSS Voltage regulator"
 +	depends on ARCH_QCOM || COMPILE_TEST
 +	help
 +	  This driver provides support for the Qualcomm IPQ806X NSS Voltage
