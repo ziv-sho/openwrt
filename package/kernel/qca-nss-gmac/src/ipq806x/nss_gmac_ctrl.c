@@ -987,7 +987,7 @@ static int32_t nss_gmac_of_get_pdata(struct device_node *np,
 		return -EFAULT;
 	}
 	maddr = (uint8_t *)of_get_mac_address(np);
-	if (maddr)
+	if (!IS_ERR(maddr))
 		memcpy(gmaccfg->mac_addr, maddr, ETH_ALEN);
 
 	if (of_address_to_resource(np, 0, &memres_devtree) != 0)
