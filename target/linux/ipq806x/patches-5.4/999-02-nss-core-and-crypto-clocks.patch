@@ -32,23 +32,13 @@
 +#define CRYPTO_AHB_RESET				161
  
  #endif
---- a/drivers/clk/qcom/Makefile	2018-03-31 11:26:20.819446000 +0800
-+++ b/drivers/clk/qcom/Makefile	2018-03-31 11:27:25.791446000 +0800
-@@ -22,6 +22,7 @@ obj-$(CONFIG_APQ_GCC_8084) += gcc-apq808
- obj-$(CONFIG_APQ_MMCC_8084) += mmcc-apq8084.o
- obj-$(CONFIG_IPQ_GCC_4019) += gcc-ipq4019.o
- obj-$(CONFIG_IPQ_GCC_806X) += gcc-ipq806x.o
-+obj-$(CONFIG_IPQ_GCC_806X) += nss-volt-ipq806x.o
- obj-$(CONFIG_IPQ_GCC_8074) += gcc-ipq8074.o
- obj-$(CONFIG_IPQ_LCC_806X) += lcc-ipq806x.o
- obj-$(CONFIG_MDM_GCC_9615) += gcc-mdm9615.o
 --- a/drivers/clk/qcom/gcc-ipq806x.c	2018-03-31 14:11:50.866182000 +0800
 +++ b/drivers/clk/qcom/gcc-ipq806x.c	2018-03-31 14:12:57.330182000 +0800
 @@ -24,6 +24,10 @@
  #include "clk-branch.h"
  #include "clk-hfpll.h"
  #include "reset.h"
-+#include "nss-volt-ipq806x.h"
++#include <linux/regulator/nss-volt-ipq806x.h>
 +
 +/* NSS safe parent index which will be used during NSS PLL rate change */
 +static int gcc_ipq806x_nss_safe_parent;
