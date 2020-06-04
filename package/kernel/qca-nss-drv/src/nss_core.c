@@ -26,6 +26,7 @@
 #include <nss_hal.h>
 #include <net/dst.h>
 #include <linux/etherdevice.h>
+#include <linux/kmemleak.h>
 #include "nss_tx_rx_common.h"
 #include "nss_data_plane.h"
 
@@ -45,7 +46,8 @@
 (((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0)))) || \
 (((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0)))) || \
 (((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)))) || \
-(((LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0))))))
+(((LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)))) || \
+(((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0))))))
 #error "Check skb recycle code in this file to match Linux version"
 #endif
 
@@ -447,7 +449,11 @@ static void nss_get_ddr_info(struct nss_mmu_ddr_info *mmu, char *name)
 	struct device_node *node;
 
 	si_meminfo(&vals);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
+	cached = global_zone_page_state(NR_FILE_PAGES);
+#else
 	cached = global_page_state(NR_FILE_PAGES);
+#endif /*KERNEL_VERSION(4, 14, 0)*/
 	avail_ddr = (vals.totalram + cached + vals.sharedram) * vals.mem_unit;
 	mmu->num_active_cores = nss_top_main.num_nss;
 
