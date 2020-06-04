@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -136,13 +136,6 @@ int32_t nss_gmac_init_mdiobus(struct nss_gmac_dev *gmacdev)
 	miibus->parent = &(gmacdev->pdev->dev);
 
 	phy_irq[gmacdev->phy_base] = PHY_POLL;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0))
-	memcpy(miibus->irq, phy_irq, PHY_MAX_ADDR);
-#else
-	miibus->irq = phy_irq;
-#endif /*KERNEL_VERSION(4, 5, 0)*/
-
 	miibus->phy_mask = ~((uint32_t)(1 << gmacdev->phy_base));
 
 	if (mdiobus_register(miibus) != 0) {
@@ -151,11 +144,12 @@ int32_t nss_gmac_init_mdiobus(struct nss_gmac_dev *gmacdev)
 		return -EIO;
 	}
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0))
-	phydev = mdiobus_get_phy(miibus, miibus->mdio_map[gmacdev->phy_base]->addr);
-#else
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0))
+	miibus->irq = phy_irq;
 	phydev = miibus->phy_map[gmacdev->phy_base];
-#endif /*KERNEL_VERSION(4, 5, 0)*/
+#else
+	phydev = mdiobus_get_phy(miibus, gmacdev->phy_base);
+#endif
 	if (!phydev) {
 		netdev_dbg(gmacdev->netdev, "%s: No phy device\n", __func__);
 		mdiobus_unregister(miibus);

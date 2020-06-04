@@ -11,7 +11,8 @@ qca-nss-gmac-objs +=	nss_gmac_dev.o \
 			nss_gmac_init.o \
 			nss_gmac_ethtool.o \
 			nss_gmac_tx_rx_offload.o \
-			nss_gmac_mdiobus.o
+			nss_gmac_mdiobus.o \
+			nss_gmac_sysctl.o
 
 GMAC_INCLUDE = -I$(obj)/include -I$(obj)/exports
 

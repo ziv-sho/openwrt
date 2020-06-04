@@ -892,7 +892,8 @@ void nss_gmac_tx_pause_disable(struct nss_gmac_dev *gmacdev)
 				dma_rx_frame_flush);
 
 	nss_gmac_clear_reg_bits(gmacdev->mac_base,
-				gmac_flow_control, gmac_tx_flow_control);
+				gmac_flow_control, NSS_GMAC_PAUSE_TIME |
+				gmac_tx_flow_control);
 
 }
 
@@ -1053,6 +1054,9 @@ void nss_gmac_config_flow_control(struct nss_gmac_dev *gmacdev)
 		nss_gmac_tx_pause_disable(gmacdev);
 		return;
 	}
+
+	if (!test_bit(__NSS_GMAC_LINKPOLL, &gmacdev->flags))
+		return;
 
 	phyreg = nss_gmac_mii_rd_reg(gmacdev, gmacdev->phy_base, MII_LPA);
 
