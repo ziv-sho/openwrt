@@ -1044,7 +1044,7 @@ static int32_t nss_gmac_of_get_pdata(struct device_node *np,
 		return -EFAULT;
 	}
 	maddr = (uint8_t *)of_get_mac_address(np);
-	if (maddr)
+	if (!IS_ERR(maddr))
 		memcpy(gmaccfg->mac_addr, maddr, ETH_ALEN);
 
 	if (of_address_to_resource(np, 0, &memres_devtree) != 0)
@@ -1460,6 +1460,8 @@ static int32_t nss_gmac_probe(struct platform_device *pdev)
 		netdev_dbg(netdev, "%s MII_PHYSID2 - 0x%04x\n", netdev->name,
 		      nss_gmac_mii_rd_reg(gmacdev, gmacdev->phy_base, MII_PHYSID2));
 	} else if (gmacdev->phy_base != NSS_GMAC_NO_MDIO_PHY) {
+		SET_NETDEV_DEV(netdev, gmacdev->miibus->parent);
+
 		/*
 		 * Issue a phy_attach for the interface connected to a switch
 		 */
