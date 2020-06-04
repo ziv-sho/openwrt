@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=qca-nss-drv
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -10,7 +10,7 @@ define KernelPackage/qca-nss-drv
   SECTION:=kernel
   CATEGORY:=Kernel modules
   SUBMENU:=Network Devices
-  DEPENDS:=@TARGET_ipq806x +kmod-qca-nss-gmac +kmod-ppp +kmod-pppoe @!LINUX_3_18
+  DEPENDS:=@TARGET_ipq806x +kmod-qca-nss-gmac +kmod-ppp +kmod-pppoe
   TITLE:=Kernel driver for NSS (core driver)
   FILES:=$(PKG_BUILD_DIR)/qca-nss-drv.ko
   AUTOLOAD:=$(call AutoLoad,32,qca-nss-drv)
@@ -45,19 +45,8 @@ endef
 
 EXTRA_CFLAGS+= -I$(STAGING_DIR)/usr/include/qca-nss-gmac -I$(STAGING_DIR)/usr/include/qca-nss-dp
 
-# Only Deluxe profile compiles ipq807x, else we compile ipq806x, this will be replaced by subtarget framework from QSDK team
-ifeq ($(CONFIG_TARGET_ipq806x_QSDK_Deluxe),y)
-subtarget:=ipq807x
-else
+ifeq ($(CONFIG_TARGET_ipq806x),y)
 subtarget:=ipq806x
-endif
-
-ifeq ($(CONFIG_TARGET_ipq807x),y)
-subtarget:=ipq807x
-endif
-
-ifeq ($(CONFIG_TARGET_ipq),y)
-subtarget:=$(SUBTARGET)
 endif
 
 define Build/Compile
