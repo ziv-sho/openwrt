@@ -20,6 +20,7 @@
  */
 
 #include <linux/seq_file_net.h>
+#include <linux/kmemleak.h>
 #include "nss_tx_rx_common.h"
 #include "nss_core.h"
 #include "nss_arch.h"

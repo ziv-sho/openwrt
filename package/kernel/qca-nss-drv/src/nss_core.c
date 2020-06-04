@@ -756,7 +756,11 @@ static inline void nss_core_handle_virt_if_pkt(struct nss_ctx_instance *nss_ctx,
 	 * Mimic Linux behavior to allow multi-queue netdev choose which queue to use
 	 */
 	if (ndev->netdev_ops->ndo_select_queue) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
+		queue_offset = ndev->netdev_ops->ndo_select_queue(ndev, nbuf, NULL);
+#else
 		queue_offset = ndev->netdev_ops->ndo_select_queue(ndev, nbuf, NULL, NULL);
+#endif /*KERNEL_VERSION(5, 3, 0)*/
 	}
 
 	skb_set_queue_mapping(nbuf, queue_offset);

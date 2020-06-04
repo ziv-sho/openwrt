@@ -19,6 +19,7 @@
  *	NSS N2H node APIs
  */
 
+#include <linux/kmemleak.h>
 #include "nss_tx_rx_common.h"
 #include "nss_n2h_stats.h"
 #include "nss_n2h_strings.h"
