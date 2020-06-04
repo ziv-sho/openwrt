@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -21,6 +21,8 @@
 
 #include "nss_tx_rx_common.h"
 #include "nss_ipsec.h"
+#include "nss_ppe.h"
+#include "nss_ipsec_log.h"
 
 #if defined(NSS_HAL_IPQ806X_SUPPORT)
 #define NSS_IPSEC_ENCAP_INTERFACE_NUM NSS_IPSEC_ENCAP_IF_NUMBER
@@ -30,12 +32,22 @@
 #elif defined(NSS_HAL_FSM9010_SUPPORT)
 #define NSS_IPSEC_ENCAP_INTERFACE_NUM NSS_IPSEC_ENCAP_IF_NUMBER
 #define NSS_IPSEC_DECAP_INTERFACE_NUM NSS_IPSEC_DECAP_IF_NUMBER
-#define NSS_IPSEC_DATA_INTERFACE_NUM NSS_IPSEC_RULE_INTERFACE
+#define NSS_IPSEC_DATA_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
 
 #elif defined(NSS_HAL_IPQ807x_SUPPORT)
-#define NSS_IPSEC_ENCAP_INTERFACE_NUM NSS_IPSEC_RULE_INTERFACE
-#define NSS_IPSEC_DECAP_INTERFACE_NUM NSS_IPSEC_RULE_INTERFACE
-#define NSS_IPSEC_DATA_INTERFACE_NUM NSS_IPSEC_RULE_INTERFACE
+#define NSS_IPSEC_ENCAP_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+#define NSS_IPSEC_DECAP_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+#define NSS_IPSEC_DATA_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+
+#elif defined(NSS_HAL_IPQ60XX_SUPPORT)
+#define NSS_IPSEC_ENCAP_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+#define NSS_IPSEC_DECAP_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+#define NSS_IPSEC_DATA_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+
+#elif defined(NSS_HAL_IPQ50XX_SUPPORT)
+#define NSS_IPSEC_ENCAP_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+#define NSS_IPSEC_DECAP_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
+#define NSS_IPSEC_DATA_INTERFACE_NUM NSS_IPSEC_CMN_INTERFACE
 
 #else
 #define NSS_IPSEC_ENCAP_INTERFACE_NUM -1
@@ -43,6 +55,25 @@
 #define NSS_IPSEC_DATA_INTERFACE_NUM -1
 
 #endif
+
+/*
+ * Amount time the synchronous message should wait for response from
+ * NSS before the timeout happens. After the timeout the message
+ * response even if it arrives has to be discarded. Typically, the
+ * time needs to be selected based on the worst case time in case of
+ * peak throughput between host & NSS.
+ */
+#define NSS_IPSEC_TX_TIMEO_TICKS msecs_to_jiffies(3000) /* 3 Seconds */
+
+/*
+ * Private data structure to hold state for
+ * the ipsec specific NSS interaction
+ */
+struct nss_ipsec_pvt {
+	struct semaphore sem;		/* used for synchronizing 'tx_msg_sync' */
+	struct completion complete;	/* completion callback */
+	atomic_t resp;	/* Response error type */
+} nss_ipsec;
 
 /*
  * nss_ipsec_get_msg_ctx()
@@ -57,7 +88,7 @@ static inline nss_ptr_t nss_ipsec_get_msg_ctx(struct nss_ctx_instance *nss_ctx, 
 	/*
 	 * the encap is primary interface
 	 */
-	if (interface_num == NSS_IPSEC_ENCAP_IF_NUMBER)
+	if (interface_num == NSS_IPSEC_ENCAP_INTERFACE_NUM)
 		return (nss_ptr_t)nss_top->ipsec_encap_ctx;
 
 	return (nss_ptr_t)nss_top->ipsec_decap_ctx;
@@ -74,7 +105,7 @@ static inline nss_ptr_t nss_ipsec_get_msg_callback(struct nss_ctx_instance *nss_
 	/*
 	 * the encap is primary interface
 	 */
-	if (interface_num == NSS_IPSEC_ENCAP_IF_NUMBER)
+	if (interface_num == NSS_IPSEC_ENCAP_INTERFACE_NUM)
 		return (nss_ptr_t)nss_top->ipsec_encap_callback;
 
 	return (nss_ptr_t)nss_top->ipsec_decap_callback;
@@ -95,6 +126,11 @@ static void nss_ipsec_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss_c
 	struct nss_ipsec_msg *nim = (struct nss_ipsec_msg *)ncm;
 	nss_ipsec_msg_callback_t cb = NULL;
 	uint32_t if_num = ncm->interface;
+
+	/*
+	 * Trace messages.
+	 */
+	nss_ipsec_log_rx_msg(nim);
 
 	/*
 	 * Sanity check the message type
@@ -121,7 +157,7 @@ static void nss_ipsec_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss_c
 	 * Is this a notification? if, yes then fill up the callback and app_data from
 	 * locally stored state
 	 */
-	if (ncm->response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (ncm->response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = nss_ipsec_get_msg_callback(nss_ctx, if_num);
 		ncm->app_data = nss_ipsec_get_msg_ctx(nss_ctx, if_num);
 	}
@@ -147,26 +183,46 @@ static void nss_ipsec_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss_c
  */
 
 /*
+ * nss_ipsec_callback()
+ *	Callback to handle the completion of NSS->HLOS messages.
+ */
+static void nss_ipsec_callback(void *app_data, struct nss_ipsec_msg *nim)
+{
+	struct nss_cmn_msg *ncm = &nim->cm;
+
+	/*
+	 * This callback is for synchronous operation. The caller sends its
+	 * response pointer which needs to be loaded with the response
+	 * data arriving from the NSS
+	 */
+	atomic_t *resp = (atomic_t *)app_data;
+
+	if (ncm->response == NSS_CMN_RESPONSE_ACK) {
+		atomic_set(resp, NSS_IPSEC_ERROR_TYPE_NONE);
+		complete(&nss_ipsec.complete);
+		return;
+	}
+
+	atomic_set(resp, ncm->error);
+	complete(&nss_ipsec.complete);
+}
+
+/*
  * nss_ipsec_tx_msg
  *	Send ipsec rule to NSS.
  */
 nss_tx_status_t nss_ipsec_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_ipsec_msg *msg)
 {
 	struct nss_cmn_msg *ncm = &msg->cm;
-	struct nss_ipsec_msg *nim;
-	struct sk_buff *nbuf;
-	int32_t status;
 
 	nss_info("%p: message %d for if %d\n", nss_ctx, ncm->type, ncm->interface);
 
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: tx message dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
-
 	BUILD_BUG_ON(NSS_NBUF_PAYLOAD_SIZE < sizeof(struct nss_ipsec_msg));
+
+	/*
+	 * Trace messages.
+	 */
+	nss_ipsec_log_tx_msg(msg);
 
 	if ((ncm->interface != NSS_IPSEC_ENCAP_INTERFACE_NUM) && (ncm->interface != NSS_IPSEC_DECAP_INTERFACE_NUM)) {
 		nss_warning("%p: tx message request for another interface: %d", nss_ctx, ncm->interface);
@@ -178,36 +234,102 @@ nss_tx_status_t nss_ipsec_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_ip
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_ipsec_msg)) {
-		nss_warning("%p: tx message request len for if %d, is bad: %d", nss_ctx, ncm->interface, nss_cmn_get_msg_len(ncm));
-		return NSS_TX_FAILURE_BAD_PARAM;
-	}
-
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: tx rule dropped as command allocation failed", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
 	nss_info("msg params version:%d, interface:%d, type:%d, cb:%p, app_data:%p, len:%d\n",
 			ncm->version, ncm->interface, ncm->type, (void *)ncm->cb, (void *)ncm->app_data, ncm->len);
 
-	nim = (struct nss_ipsec_msg *)skb_put(nbuf, sizeof(struct nss_ipsec_msg));
-	memcpy(nim, msg, sizeof(struct nss_ipsec_msg));
-
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: tx Unable to enqueue message \n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, msg, sizeof(*msg), NSS_NBUF_PAYLOAD_SIZE);
 }
 EXPORT_SYMBOL(nss_ipsec_tx_msg);
+
+/*
+ * nss_ipsec_tx_msg_sync()
+ *	Transmit a ipsec message to NSS firmware synchronously.
+ */
+nss_tx_status_t nss_ipsec_tx_msg_sync(struct nss_ctx_instance *nss_ctx, uint32_t if_num,
+					enum nss_ipsec_msg_type type, uint16_t len,
+					struct nss_ipsec_msg *nim, enum nss_ipsec_error_type *resp)
+{
+	struct nss_ipsec_msg nim_local = { {0} };
+	nss_tx_status_t status;
+	int ret;
+
+	/*
+	 * Length of the message should be the based on type
+	 */
+	if (len > sizeof(nim_local.msg)) {
+		nss_warning("%p: (%u)Bad message length(%u) for type (%d)", nss_ctx, if_num, len, type);
+		return NSS_TX_FAILURE_TOO_LARGE;
+	}
+
+	/*
+	 * Response buffer is a required for copying the response for message
+	 */
+	if (!resp) {
+		nss_warning("%p: (%u)Response buffer is empty, type(%d)", nss_ctx, if_num, type);
+		return NSS_TX_FAILURE_BAD_PARAM;
+	}
+
+	/*
+	 * TODO: this can be removed in future as we need to ensure that the response
+	 * memory is only updated when the current outstanding request is waiting.
+	 * This can be solved by introducing sequence no. in messages and only completing
+	 * the message if the sequence no. matches. For now this is solved by passing
+	 * a known memory nss_ipsec.resp
+	 */
+	down(&nss_ipsec.sem);
+
+	/*
+	 * Initializing it to a fail error type
+	 */
+	atomic_set(&nss_ipsec.resp, NSS_IPSEC_ERROR_TYPE_UNHANDLED_MSG);
+
+	/*
+	 * We need to copy the message content into the actual message
+	 * to be sent to NSS
+	 *
+	 * Note: Here pass the nss_ipsec.resp as the pointer. Since, the caller
+	 * provided pointer is not allocated by us and may go away when this function
+	 * returns with failure. The callback is not aware of this and may try to
+	 * access the pointer incorrectly potentially resulting in a crash.
+	 */
+	nss_ipsec_msg_init(&nim_local, if_num, type, len, nss_ipsec_callback, &nss_ipsec.resp);
+	memcpy(&nim_local.msg, &nim->msg, len);
+
+	status = nss_ipsec_tx_msg(nss_ctx, &nim_local);
+	if (status != NSS_TX_SUCCESS) {
+		nss_warning("%p: ipsec_tx_msg failed", nss_ctx);
+		goto done;
+	}
+
+	ret = wait_for_completion_timeout(&nss_ipsec.complete, NSS_IPSEC_TX_TIMEO_TICKS);
+	if (!ret) {
+		nss_warning("%p: IPsec msg tx failed due to timeout", nss_ctx);
+		status = NSS_TX_FAILURE_NOT_ENABLED;
+		goto done;
+	}
+
+	/*
+	 * Read memory barrier
+	 */
+	smp_rmb();
+
+	/*
+	 * Copy the response received
+	 */
+	*resp = atomic_read(&nss_ipsec.resp);
+
+	/*
+	 * Only in case of non-error response we will
+	 * indicate success
+	 */
+	if (*resp != NSS_IPSEC_ERROR_TYPE_NONE)
+		status = NSS_TX_FAILURE;
+
+done:
+	up(&nss_ipsec.sem);
+	return status;
+}
+EXPORT_SYMBOL(nss_ipsec_tx_msg_sync);
 
 /*
  * nss_ipsec_tx_buf
@@ -216,32 +338,10 @@ EXPORT_SYMBOL(nss_ipsec_tx_msg);
 nss_tx_status_t nss_ipsec_tx_buf(struct sk_buff *skb, uint32_t if_num)
 {
 	struct nss_ctx_instance *nss_ctx = &nss_top_main.nss[nss_top_main.ipsec_handler_id];
-	int32_t status;
 
 	nss_trace("%p: IPsec If Tx packet, id:%d, data=%p", nss_ctx, if_num, skb->data);
 
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: 'IPsec If Tx' packet dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
-
-	status = nss_core_send_buffer(nss_ctx, if_num, skb, NSS_IF_DATA_QUEUE_0, H2N_BUFFER_PACKET, 0);
-	if (unlikely(status != NSS_CORE_STATUS_SUCCESS)) {
-		nss_warning("%p: Unable to enqueue 'IPsec If Tx' packet\n", nss_ctx);
-		if (status == NSS_CORE_STATUS_FAILURE_QUEUE) {
-			return NSS_TX_FAILURE_QUEUE;
-		}
-
-		return NSS_TX_FAILURE;
-	}
-
-	/*
-	 * Kick the NSS awake so it can process our new entry.
-	 */
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_PACKET]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_packet(nss_ctx, skb, if_num, H2N_BIT_FLAG_BUFFER_REUSABLE);
 }
 EXPORT_SYMBOL(nss_ipsec_tx_buf);
 
@@ -330,18 +430,12 @@ struct nss_ctx_instance *nss_ipsec_data_register(uint32_t if_num, nss_ipsec_buf_
 		return nss_ctx;
 	}
 
-	nss_ctx->subsys_dp_register[if_num].cb = cb;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].ndev = netdev;
-	nss_ctx->subsys_dp_register[if_num].features = features;
+	nss_core_register_subsys_dp(nss_ctx, if_num, cb, NULL, NULL, netdev, features);
 
 	if (nss_top_main.ipsec_handler_id == 1) {
 		nss_ctx0 = &nss_top_main.nss[0];
 
-		nss_ctx0->subsys_dp_register[if_num].cb = cb;
-		nss_ctx0->subsys_dp_register[if_num].app_data = NULL;
-		nss_ctx0->subsys_dp_register[if_num].ndev = netdev;
-		nss_ctx0->subsys_dp_register[if_num].features = features;
+		nss_core_register_subsys_dp(nss_ctx0, if_num, cb, NULL, NULL, netdev, features);
 	}
 
 	return nss_ctx;
@@ -364,16 +458,10 @@ void nss_ipsec_data_unregister(struct nss_ctx_instance *nss_ctx, uint32_t if_num
 	if (nss_top_main.ipsec_handler_id == 1) {
 		nss_ctx0 = &nss_top_main.nss[0];
 
-		nss_ctx0->subsys_dp_register[if_num].cb = NULL;
-		nss_ctx0->subsys_dp_register[if_num].app_data = NULL;
-		nss_ctx0->subsys_dp_register[if_num].ndev = NULL;
-		nss_ctx0->subsys_dp_register[if_num].features = 0;
+		nss_core_unregister_subsys_dp(nss_ctx0, if_num);
 	}
 
-	nss_ctx->subsys_dp_register[if_num].cb = NULL;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = 0;
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
 }
 EXPORT_SYMBOL(nss_ipsec_data_unregister);
 
@@ -408,14 +496,70 @@ int32_t nss_ipsec_get_data_interface(void)
 EXPORT_SYMBOL(nss_ipsec_get_data_interface);
 
 /*
- * nss_ipsec_get_ctx()
- * 	get NSS context instance for IPsec handle
+ * nss_ipsec_get_context()
+ * 	Get NSS context instance for IPsec handle
  */
 struct nss_ctx_instance *nss_ipsec_get_context(void)
 {
 	return &nss_top_main.nss[nss_top_main.ipsec_handler_id];
 }
 EXPORT_SYMBOL(nss_ipsec_get_context);
+
+/*
+ * nss_ipsec_get_ifnum()
+ *	Return IPsec interface number with coreid.
+ */
+int32_t nss_ipsec_get_ifnum(int32_t if_num)
+{
+	struct nss_ctx_instance *nss_ctx = nss_ipsec_get_context();
+
+	NSS_VERIFY_CTX_MAGIC(nss_ctx);
+	return NSS_INTERFACE_NUM_APPEND_COREID(nss_ctx, if_num);
+}
+EXPORT_SYMBOL(nss_ipsec_get_ifnum);
+
+/*
+ * nss_ipsec_ppe_port_config()
+ *	Configure PPE port for IPsec inline
+ */
+bool nss_ipsec_ppe_port_config(struct nss_ctx_instance *nss_ctx, struct net_device *netdev,
+					uint32_t if_num, uint32_t vsi_num)
+{
+#ifdef NSS_PPE_SUPPORTED
+	if_num = NSS_INTERFACE_NUM_APPEND_COREID(nss_ctx, if_num);
+
+	if (nss_ppe_tx_ipsec_config_msg(if_num, vsi_num, netdev->mtu, netdev->mtu) != NSS_TX_SUCCESS) {
+		nss_warning("%p: Failed to configure PPE IPsec port", nss_ctx);
+		return false;
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+EXPORT_SYMBOL(nss_ipsec_ppe_port_config);
+
+/*
+ * nss_ipsec_ppe_mtu_update()
+ *	Update PPE MTU for IPsec inline
+ */
+bool nss_ipsec_ppe_mtu_update(struct nss_ctx_instance *nss_ctx, uint32_t if_num, uint16_t mtu, uint16_t mru)
+{
+#ifdef NSS_PPE_SUPPORTED
+	if_num = NSS_INTERFACE_NUM_APPEND_COREID(nss_ctx, if_num);
+
+	if (nss_ppe_tx_ipsec_mtu_msg(if_num, mtu, mru) != NSS_TX_SUCCESS) {
+		nss_warning("%p: Failed to update PPE MTU for IPsec port", nss_ctx);
+		return false;
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+EXPORT_SYMBOL(nss_ipsec_ppe_mtu_update);
 
 /*
  * nss_ipsec_register_handler()
@@ -427,14 +571,18 @@ void nss_ipsec_register_handler()
 	BUILD_BUG_ON(NSS_IPSEC_ENCAP_INTERFACE_NUM < 0);
 	BUILD_BUG_ON(NSS_IPSEC_DECAP_INTERFACE_NUM < 0);
 
+	sema_init(&nss_ipsec.sem, 1);
+	init_completion(&nss_ipsec.complete);
+	atomic_set(&nss_ipsec.resp, NSS_IPSEC_ERROR_TYPE_NONE);
+
 	nss_ctx->nss_top->ipsec_encap_callback = NULL;
 	nss_ctx->nss_top->ipsec_decap_callback = NULL;
 
 	nss_ctx->nss_top->ipsec_encap_ctx = NULL;
 	nss_ctx->nss_top->ipsec_decap_ctx = NULL;
 
-	nss_core_register_handler(NSS_IPSEC_ENCAP_INTERFACE_NUM, nss_ipsec_msg_handler, NULL);
-	nss_core_register_handler(NSS_IPSEC_DECAP_INTERFACE_NUM, nss_ipsec_msg_handler, NULL);
+	nss_core_register_handler(nss_ctx, NSS_IPSEC_ENCAP_INTERFACE_NUM, nss_ipsec_msg_handler, NULL);
+	nss_core_register_handler(nss_ctx, NSS_IPSEC_DECAP_INTERFACE_NUM, nss_ipsec_msg_handler, NULL);
 }
 
 /*

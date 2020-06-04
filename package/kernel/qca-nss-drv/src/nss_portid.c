@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -15,6 +15,8 @@
  */
 
 #include "nss_tx_rx_common.h"
+#include "nss_portid_stats.h"
+#include "nss_portid_log.h"
 
 /*
  * Spinlock to protect portid interface create/destroy/update
@@ -35,58 +37,7 @@ static struct nss_portid_pvt {
 /*
  * Array of portid interface handles. Indexing based on the physical port_id
  */
-struct nss_portid_handle {
-	uint32_t if_num;			/**< Interface number */
-	struct rtnl_link_stats64 stats;		/**< statistics counters */
-};
-static struct nss_portid_handle nss_portid_hdl[NSS_PORTID_MAX_SWITCH_PORT];
-
-/*
- * nss_portid_node_sync_update()
- *	Update portid node stats.
- */
-static void nss_portid_sync_update(struct nss_ctx_instance *nss_ctx, struct nss_portid_stats_sync_msg *npsm)
-{
-	struct nss_top_instance *nss_top = nss_ctx->nss_top;
-	struct nss_portid_handle *hdl;
-
-	if (npsm->port_id == NSS_PORTID_MAX_SWITCH_PORT) {
-		/*
-		 * Update PORTID base node stats.
-		 */
-		spin_lock_bh(&nss_top->stats_lock);
-		nss_top->stats_node[NSS_PORTID_INTERFACE][NSS_STATS_NODE_RX_PKTS] += npsm->node_stats.rx_packets;
-		nss_top->stats_node[NSS_PORTID_INTERFACE][NSS_STATS_NODE_RX_BYTES] += npsm->node_stats.rx_bytes;
-		nss_top->stats_node[NSS_PORTID_INTERFACE][NSS_STATS_NODE_RX_DROPPED] += npsm->node_stats.rx_dropped;
-		nss_top->stats_node[NSS_PORTID_INTERFACE][NSS_STATS_NODE_TX_PKTS] += npsm->node_stats.tx_packets;
-		nss_top->stats_node[NSS_PORTID_INTERFACE][NSS_STATS_NODE_TX_BYTES] += npsm->node_stats.tx_bytes;
-		nss_top->stats_portid[NSS_STATS_PORTID_RX_INVALID_HEADER] += npsm->rx_invalid_header;
-		spin_unlock_bh(&nss_top->stats_lock);
-		return;
-	}
-
-	if (npsm->port_id >= NSS_PORTID_MAX_SWITCH_PORT) {
-		nss_warning("port_id %d exceeds NSS_PORTID_MAX_SWITCH_PORT\n", npsm->port_id);
-		return;
-	}
-
-	/*
-	 * Update PORTID interface stats.
-	 */
-	spin_lock_bh(&nss_portid_spinlock);
-	hdl = &nss_portid_hdl[npsm->port_id];
-	if (hdl->if_num == 0) {
-		nss_warning("%p: nss_portid recv'd stats with unconfigured port %d", nss_ctx, npsm->port_id);
-		spin_unlock_bh(&nss_portid_spinlock);
-		return;
-	}
-	hdl->stats.rx_packets += npsm->node_stats.rx_packets;
-	hdl->stats.rx_bytes += npsm->node_stats.rx_bytes;
-	hdl->stats.rx_dropped += npsm->node_stats.rx_dropped;
-	hdl->stats.tx_packets += npsm->node_stats.tx_packets;
-	hdl->stats.tx_bytes += npsm->node_stats.tx_bytes;
-	spin_unlock_bh(&nss_portid_spinlock);
-}
+struct nss_portid_handle nss_portid_hdl[NSS_PORTID_MAX_SWITCH_PORT];
 
 /*
  * nss_portid_handler()
@@ -99,6 +50,11 @@ static void nss_portid_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_
 	struct nss_portid_msg *npm = (struct nss_portid_msg *)ncm;
 
 	BUG_ON(ncm->interface != NSS_PORTID_INTERFACE);
+
+	/*
+	 * Trace Messages
+	 */
+	nss_portid_log_rx_msg(npm);
 
 	/*
 	 * Is this a valid request/response packet?
@@ -118,13 +74,12 @@ static void nss_portid_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_
 	 */
 	nss_core_log_msg_failures(nss_ctx, ncm);
 
-
 	switch (ncm->type) {
 	case NSS_PORTID_STATS_SYNC_MSG:
 		/*
 		 * Update portid statistics.
 		 */
-		nss_portid_sync_update(nss_ctx, &npm->msg.stats_sync);
+		nss_portid_stats_sync(nss_ctx, &npm->msg.stats_sync);
 		break;
 	}
 
@@ -132,7 +87,7 @@ static void nss_portid_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_
 	 * Update the callback and app_data for NOTIFY messages, portid sends all notify messages
 	 * to the same callback/app_data.
 	 */
-	if (ncm->response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (ncm->response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = (nss_ptr_t)nss_ctx->nss_top->if_rx_msg_callback[ncm->interface];
 		ncm->app_data = (nss_ptr_t)nss_ctx->subsys_dp_register[ncm->interface].ndev;
 	}
@@ -174,7 +129,7 @@ static bool nss_portid_verify_if_num(uint32_t if_num)
 		return false;
 	}
 
-	if (nss_dynamic_interface_get_type(if_num) != NSS_DYNAMIC_INTERFACE_TYPE_PORTID) {
+	if (nss_dynamic_interface_get_type(nss_portid_get_ctx(), if_num) != NSS_DYNAMIC_INTERFACE_TYPE_PORTID) {
 		return false;
 	}
 
@@ -218,16 +173,12 @@ EXPORT_SYMBOL(nss_portid_if_tx_data);
  */
 nss_tx_status_t nss_portid_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_portid_msg *msg)
 {
-	struct nss_portid_msg *nm;
 	struct nss_cmn_msg *ncm = &msg->cm;
-	struct sk_buff *nbuf;
-	int32_t status;
 
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: portid msg dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
+	/*
+	 * Trace Messages
+	 */
+	nss_portid_log_tx_msg(msg);
 
 	/*
 	 * Sanity check the message
@@ -242,35 +193,7 @@ nss_tx_status_t nss_portid_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_p
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_portid_msg)) {
-		nss_warning("%p: message length is invalid: %d", nss_ctx, nss_cmn_get_msg_len(ncm));
-		return NSS_TX_FAILURE;
-	}
-
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: msg dropped as command allocation failed", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	/*
-	 * Copy the message to our skb
-	 */
-	nm = (struct nss_portid_msg *)skb_put(nbuf, sizeof(struct nss_portid_msg));
-	memcpy(nm, msg, sizeof(struct nss_portid_msg));
-
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: Unable to enqueue portid message' \n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_CMD_REQ]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, msg, sizeof(*msg), NSS_NBUF_PAYLOAD_SIZE);
 }
 EXPORT_SYMBOL(nss_portid_tx_msg);
 
@@ -437,9 +360,7 @@ struct nss_ctx_instance *nss_portid_register_port_if(uint32_t if_num, uint32_t p
 	nss_portid_hdl[port_id].if_num = if_num;
 	spin_unlock(&nss_portid_spinlock);
 
-	nss_ctx->subsys_dp_register[if_num].ndev = netdev;
-	nss_ctx->subsys_dp_register[if_num].cb = buf_callback;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
+	nss_core_register_subsys_dp(nss_ctx, if_num, buf_callback, NULL, NULL, netdev, 0);
 
 	return nss_ctx;
 }
@@ -468,12 +389,9 @@ bool nss_portid_unregister_port_if(uint32_t if_num)
 	}
 	spin_unlock(&nss_portid_spinlock);
 
-	(void) nss_core_unregister_handler(if_num);
+	nss_core_unregister_handler(nss_ctx, if_num);
 
-	nss_ctx->subsys_dp_register[if_num].cb = NULL;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = 0;
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
 
 	return true;
 }
@@ -494,7 +412,11 @@ void nss_portid_init(void)
  */
 void nss_portid_register_handler(void)
 {
-	nss_core_register_handler(NSS_PORTID_INTERFACE, nss_portid_handler, NULL);
+	struct nss_ctx_instance *nss_ctx = nss_portid_get_ctx();
+
+	nss_core_register_handler(nss_ctx, NSS_PORTID_INTERFACE, nss_portid_handler, NULL);
+
+	nss_portid_stats_dentry_create();
 
 	sema_init(&pid.sem, 1);
 	init_completion(&pid.complete);

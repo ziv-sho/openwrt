@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -14,363 +14,634 @@
  **************************************************************************
  */
 
- /*
-  * nss_capwap.h
-  * 	NSS TO HLOS interface definitions.
-  */
+/*
+ * @file nss_capwap.h
+ *	NSS CAPWAP interface definitions.
+ */
 
 #ifndef __NSS_CAPWAP_H
 #define __NSS_CAPWAP_H
 
 /**
- * Headroom required for CAPWAP packets.
+ * @addtogroup nss_capwap_subsystem
+ * @{
+ */
+
+/**
+ * Size of the headroom required for CAPWAP packets.
  */
 #define NSS_CAPWAP_HEADROOM 256
 
 /**
- * CAPWAP message types
+ * nss_capwap_stats_encap_types
+ *	CAPWAP encapsulation statistics.
+ */
+enum nss_capwap_stats_encap_types {
+	NSS_CAPWAP_STATS_ENCAP_TX_PKTS,
+	NSS_CAPWAP_STATS_ENCAP_TX_BYTES,
+	NSS_CAPWAP_STATS_ENCAP_TX_SEGMENTS,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_SG_REF,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_VER_MISMATCH,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_UNALIGN,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_HEADER_ROOM,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_DTLS,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_NWIRELESS,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_QUEUE_FULL,
+	NSS_CAPWAP_STATS_ENCAP_TX_DROP_MEM_FAIL,
+	NSS_CAPWAP_STATS_ENCAP_FAST_MEM,
+	NSS_CAPWAP_STATS_ENCAP_MAX
+};
+
+/**
+ * nss_capwap_stats_decap_types
+ *	CAPWAP decapsulation statistics.
+ */
+enum nss_capwap_stats_decap_types {
+	NSS_CAPWAP_STATS_DECAP_RX_PKTS,
+	NSS_CAPWAP_STATS_DECAP_RX_BYTES,
+	NSS_CAPWAP_STATS_DECAP_RX_DTLS_PKTS,
+	NSS_CAPWAP_STATS_DECAP_RX_SEGMENTS,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP_OVERSIZE,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP_FRAG_TIMEOUT,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP_DUP_FRAG,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP_FRAG_GAP,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP_QUEUE_FULL,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP_MEM_FAIL,
+	NSS_CAPWAP_STATS_DECAP_RX_DROP_CHECKSUM,
+	NSS_CAPWAP_STATS_DECAP_RX_MALFORMED,
+	NSS_CAPWAP_STATS_DECAP_FAST_MEM,
+	NSS_CAPWAP_STATS_DECAP_MAX
+};
+
+/**
+ * nss_capwap_msg_type
+ *	CAPWAP message types.
  */
 typedef enum nss_capwap_msg_type {
-	NSS_CAPWAP_MSG_TYPE_NONE = 0,
-	NSS_CAPWAP_MSG_TYPE_CFG_RULE = 1,		/**< Create a rule for a tunnel */
-	NSS_CAPWAP_MSG_TYPE_UNCFG_RULE = 2,		/**< Remove a rule of a tunnel */
-	NSS_CAPWAP_MSG_TYPE_ENABLE_TUNNEL = 3,		/**< Enable a tunnel */
-	NSS_CAPWAP_MSG_TYPE_DISABLE_TUNNEL = 4,		/**< Disable a tunnel */
-	NSS_CAPWAP_MSG_TYPE_UPDATE_PATH_MTU = 5,	/**< Update Path MTU*/
-	NSS_CAPWAP_MSG_TYPE_SYNC_STATS = 6,		/**< stats sync message */
-	NSS_CAPWAP_MSG_TYPE_VERSION = 7,		/**< Choose between CAPWAP version. Default is V1 */
-	NSS_CAPWAP_MSG_TYPE_DTLS = 8,			/**< Configure DTLS setting */
+	NSS_CAPWAP_MSG_TYPE_NONE,
+	NSS_CAPWAP_MSG_TYPE_CFG_RULE,
+	NSS_CAPWAP_MSG_TYPE_UNCFG_RULE,
+	NSS_CAPWAP_MSG_TYPE_ENABLE_TUNNEL,
+	NSS_CAPWAP_MSG_TYPE_DISABLE_TUNNEL,
+	NSS_CAPWAP_MSG_TYPE_UPDATE_PATH_MTU,
+	NSS_CAPWAP_MSG_TYPE_SYNC_STATS,
+	NSS_CAPWAP_MSG_TYPE_VERSION,		/**< Default is version 1. */
+	NSS_CAPWAP_MSG_TYPE_DTLS,
+	NSS_CAPWAP_MSG_TYPE_FLOW_RULE_ADD,
+	NSS_CAPWAP_MSG_TYPE_FLOW_RULE_DEL,
 	NSS_CAPWAP_MSG_TYPE_MAX,
 } nss_capwap_msg_type_t;
 
 /**
- * Error types for CAPWAP response to messages from Host.
+ * nss_capwap_msg_response
+ *	Error types for CAPWAP responses to messages from the host.
  */
 typedef enum nss_capwap_msg_response {
-	NSS_CAPWAP_ERROR_MSG_INVALID_REASSEMBLY_TIMEOUT,	/**< Invalid reassembly timeout passed */
-	NSS_CAPWAP_ERROR_MSG_INVALID_PATH_MTU,			/**< Invalid path mtu passed */
-	NSS_CAPWAP_ERROR_MSG_INVALID_MAX_FRAGMENT,		/**< Invalid max-fragment passed */
-	NSS_CAPWAP_ERROR_MSG_INVALID_BUFFER_SIZE,		/**< Invalid max-buffer-size passed */
-	NSS_CAPWAP_ERROR_MSG_INVALID_L3_PROTO,			/**< Invalid L3 protocol passed */
-	NSS_CAPWAP_ERROR_MSG_INVALID_UDP_PROTO,			/**< Invalid UDP protocol passed */
-	NSS_CAPWAP_ERROR_MSG_INVALID_VERSION,			/**< Inavlid CAPWAP version */
-	NSS_CAPWAP_ERROR_MSG_TUNNEL_DISABLED,			/**< Tunnel is already disabled */
-	NSS_CAPWAP_ERROR_MSG_TUNNEL_ENABLED,			/**< Tunnel is already enabled */
-	NSS_CAPWAP_ERROR_MSG_TUNNEL_NOT_CFG,			/**< Tunnel is not configured yet */
-	NSS_CAPWAP_ERROR_MSG_INVALID_IP_NODE,			/**< Invalid tunnel IP node */
-	NSS_CAPWAP_ERROR_MSG_INVALID_TYPE_FLAG,			/**< Invalid type */
-	NSS_CAPWAP_ERROR_MSG_INVALID_DTLS_CFG,			/**< Invalid DTLS configuration */
+	NSS_CAPWAP_ERROR_MSG_INVALID_REASSEMBLY_TIMEOUT,
+	NSS_CAPWAP_ERROR_MSG_INVALID_PATH_MTU,
+	NSS_CAPWAP_ERROR_MSG_INVALID_MAX_FRAGMENT,
+	NSS_CAPWAP_ERROR_MSG_INVALID_BUFFER_SIZE,
+	NSS_CAPWAP_ERROR_MSG_INVALID_L3_PROTO,
+	NSS_CAPWAP_ERROR_MSG_INVALID_UDP_PROTO,
+	NSS_CAPWAP_ERROR_MSG_INVALID_VERSION,
+	NSS_CAPWAP_ERROR_MSG_TUNNEL_DISABLED,
+	NSS_CAPWAP_ERROR_MSG_TUNNEL_ENABLED,
+	NSS_CAPWAP_ERROR_MSG_TUNNEL_NOT_CFG,
+	NSS_CAPWAP_ERROR_MSG_INVALID_IP_NODE,
+	NSS_CAPWAP_ERROR_MSG_INVALID_TYPE_FLAG,
+	NSS_CAPWAP_ERROR_MSG_INVALID_DTLS_CFG,
+	NSS_CAPWAP_ERROR_MSG_FLOW_TABLE_FULL,
+	NSS_CAPWAP_ERROR_MSG_FLOW_EXIST,
+	NSS_CAPWAP_ERROR_MSG_FLOW_NOT_EXIST,
+	NSS_CAPWAP_ERROR_MSG_MAX,
 } nss_capwap_msg_response_t;
 
 /**
- * Per-tunnel stats message from NSS FW
+ * nss_capwap_stats_msg
+ *	Per-tunnel statistics messages from the NSS firmware.
  */
 struct nss_capwap_stats_msg {
-	struct nss_if_stats pnode_stats;	/**< NSS FW common stats */
-	uint32_t dtls_pkts;			/**< Number of DTLS pkts flowing through */
+	struct nss_cmn_node_stats pnode_stats;	/**< Common firmware statistics. */
+	uint32_t dtls_pkts;		/**< Number of DTLS packets flowing through. */
 
 	/*
 	 * Rx/decap stats
 	 */
-	uint32_t rx_dup_frag;		/**< Number of duplicate fragment */
-	uint32_t rx_segments;		/**< Number of segments/fragments */
-	uint32_t rx_oversize_drops;	/**< Size of packet > than payload size */
-	uint32_t rx_frag_timeout_drops;	/**< Drops due to reassembly timeout */
-	uint32_t rx_queue_full_drops;	/* Drops due to queue full condition */
+	uint32_t rx_dup_frag;		/**< Number of duplicate fragments. */
+	uint32_t rx_segments;		/**< Number of segments or fragments. */
+
+	/**
+	 * Packets dropped because they are larger than the payload size.
+	 */
+	uint32_t rx_oversize_drops;
+
+	uint32_t rx_frag_timeout_drops;
+			/**< Packets dropped because of a reassembly timeout. */
+	uint32_t rx_queue_full_drops;
+			/**< Packets dropped because the queue is full. */
 	uint32_t rx_n2h_queue_full_drops;
-	uint32_t rx_csum_drops;		/**< Dropped RX packets due to checksum mismatch */
-	uint32_t rx_malformed;		/**< Malformed packet drops */
-	uint32_t rx_mem_failure_drops;	/**< Drops due to Memory Failure */
-	uint32_t rx_frag_gap_drops;	/**< Drops due to fragment-offset not being sequential */
+			/**< Packets dropped because the NSS-to-host queue is full. */
+	uint32_t rx_csum_drops;
+			/**< Packets dropped because of a checksum mismatch. */
+	uint32_t rx_malformed;
+			/**< Packets dropped because of a malformed packet. */
+	uint32_t rx_mem_failure_drops;
+			/**< Packets dropped because of a memory failure. */
+	uint32_t rx_frag_gap_drops;
+			/**< Packets dropped because of a non-sequential fragment offset. */
 
 	/*
 	 * Tx/encap stats
 	 */
-	uint32_t tx_segments;		/**< Number of segments/fragments */
-	uint32_t tx_queue_full_drops;	/**< Drops due to queue full condition */
-	uint32_t tx_mem_failure_drops;	/**< Drops due to Memory Failure */
-	uint32_t tx_dropped_sg_ref;	/**< TX dropped due to sg reference */
-	uint32_t tx_dropped_ver_mis;	/**< TX Dropped due to version mismatch */
-	uint32_t tx_dropped_unalign;	/**< TX Dropped due to unaligned active buffer */
-	uint32_t tx_dropped_hroom;	/**< TX Dropped due to insufficent headroom */
-	uint32_t tx_dropped_dtls;	/**< TX Dropped due to DTLS pkt */
-	uint32_t tx_dropped_nwireless;	/**< TX Dropped due to nwireless being wrong */
+	uint32_t tx_segments;		/**< Number of segments or fragments. */
+	uint32_t tx_queue_full_drops;	/**< Packets dropped because of a full queue. */
+	uint32_t tx_mem_failure_drops;
+			/**< Packets dropped because of a memory failure. */
+	uint32_t tx_dropped_sg_ref;
+			/**< Packets dropped because of a scatter-gather reference. */
+	uint32_t tx_dropped_ver_mis;
+			/**< Packets dropped because of a version mismatch. */
+	uint32_t Reserved;
+			/**< Reserved. */
+	uint32_t tx_dropped_hroom;
+			/**< Packets dropped because of insufficent headroom. */
+	uint32_t tx_dropped_dtls;
+			/**< Packets dropped because of a DTLS packet. */
+	uint32_t tx_dropped_nwireless;
+			/**< Packets dropped because the nwireless field information is wrong. */
+
+	uint32_t fast_mem;
+			/**< Set to 1 when tunnel is operating in fast memory. */
 };
 
 /**
- * IPv4/IPv6 structure
+ * nss_capwap_ip
+ *	IP versions.
  */
 struct nss_capwap_ip {
+	/**
+	 * Union of IPv4 and IPv6 IP addresses.
+	 */
 	union {
-		uint32_t ipv4;		/**< IPv4 address */
-		uint32_t ipv6[4];	/**< IPv6 address */
-	} ip;
+		uint32_t ipv4;		/**< IPv4 address. */
+		uint32_t ipv6[4];	/**< IPv6 address. */
+	} ip;		/**< Union of IPv4 and IPv6 IP addresses. */
 };
 
 /**
- * Encap information for CAPWAP tunnel
+ * nss_capwap_encap_rule
+ *	Encapsulation information for a CAPWAP tunnel.
  */
 struct nss_capwap_encap_rule {
-	struct  nss_capwap_ip src_ip;	/**< Source IP */
-	uint32_t src_port;		/**< Source Port */
-	struct nss_capwap_ip dest_ip;	/**< Destination IP */
-	uint32_t dest_port;		/**< Destination Port */
-	uint32_t path_mtu;		/**< Path MTU */
+	struct  nss_capwap_ip src_ip;	/**< Source IP. */
+	uint32_t src_port;		/**< Source port. */
+	struct nss_capwap_ip dest_ip;	/**< Destination IP. */
+	uint32_t dest_port;		/**< Destination port. */
+	uint32_t path_mtu;		/**< MTU on the path. */
 };
 
 /**
- * Decap information for CAPWAP tunnel
+ * nss_capwap_decap_rule
+ *	Decapsulation information for a CAPWAP tunnel.
  */
 struct nss_capwap_decap_rule {
-	uint32_t reassembly_timeout;	/**< In milli-seconds */
-	uint32_t max_fragments;		/**< Max number of fragments expected */
-	uint32_t max_buffer_size;	/**< Max size of the payload buffer */
+	uint32_t reassembly_timeout;	/**< Timeout in milliseconds. */
+	uint32_t max_fragments;		/**< Maximum number of fragments expected. */
+	uint32_t max_buffer_size;	/**< Maximum size of the payload buffer. */
 };
 
 /**
- * Rule structure for CAPWAP. The same rule structure applies for both encap and decap
+ * nss_capwap_rule_msg
+ *	CAPWAP rule message.
+ *
+ * The same rule structure applies for both encapsulation and decapsulation
  * in a tunnel.
  */
 struct nss_capwap_rule_msg {
-	struct nss_capwap_encap_rule encap;	/**< Encap portion of the rule */
-	struct nss_capwap_decap_rule decap;	/**< Decap portion of the rule */
-	uint32_t stats_timer;			/**< Stats interval timer in mill-seconds */
-	int8_t rps;				/**< Core to choose for receiving packets. Set to -1 for NSS FW to decide */
-	uint8_t type_flags;			/**< VLAN and/or PPPOE configured */
-	uint8_t l3_proto;			/**< NSS_CAPWAP_TUNNEL_IPV4 or NSS_CAPWAP_TUNNEL_IPV6 */
-	uint8_t which_udp;			/**< NSS_CAPWAP_TUNNEL_UDP or NSS_CAPWAP_TUNNEL_UDPLite */
-	uint32_t dtls_enabled;			/**< Tunnel encrypted with DTLS? */
-	uint32_t dtls_if_num;			/**< Interface number of the associated dtls node */
-	uint32_t mtu_adjust;			/**< mtu reserved for DTLS process */
-	uint32_t trustsec_enabled;		/**< Tunnel enables trustsec hdr processing? */
-	uint16_t sgt_value;			/**< Security Group Tag value configured for this tunnel */
-	uint16_t gmac_ifnum;			/**< Outgoing physical interface */
+	struct nss_capwap_encap_rule encap;	/**< Encapsulation portion of the rule. */
+	struct nss_capwap_decap_rule decap;	/**< Decapsulation portion of the rule. */
+	uint32_t stats_timer;	/**< Statistics interval timer in milliseconds. */
+
+	/**
+	 * Core to choose for receiving packets.
+	 *
+	 * Set to -1 for the NSS firmware to decide.
+	 */
+	int8_t rps;
+
+	uint8_t type_flags;		/**< VLAN or PPPOE is configured. */
+	uint8_t l3_proto;
+			/**< Prototype is NSS_CAPWAP_TUNNEL_IPV4 or NSS_CAPWAP_TUNNEL_IPV6. */
+	uint8_t which_udp;		/**< Tunnel uses the UDP or UDPLite protocol. */
+	uint32_t mtu_adjust;	/**< MTU is reserved for a DTLS process. */
+	uint32_t gmac_ifnum;	/**< Outgoing physical interface. */
+	uint32_t enabled_features;
+			/**< Tunnel enabled features bit flag. */
+
+	/*
+	 * Parameters for each features
+	 */
+	uint32_t dtls_inner_if_num;	/**< Interface number of the associated DTLS node. */
+	uint8_t bssid[ETH_ALEN];	/**< BSSID value. */
+	uint16_t outer_sgt_value;
+			/**< Security Group Tag value configured for this tunnel. */
 };
 
 /**
- * CAPWAP version message.
+ * nss_capwap_version_msg
+ *	Message to set the CAPWAP version.
  */
 struct nss_capwap_version_msg {
-	uint32_t version;
+	uint32_t version;	/**< CAPWAP protocol version. */
 };
 
 /**
- * Path MTU message.
+ * nss_capwap_path_mtu_msg
+ *	Message information for the path MTU.
  */
 struct nss_capwap_path_mtu_msg {
-	uint32_t path_mtu;	/**< New Path MTU */
+	uint32_t path_mtu;	/**< Path MTU value between the controller and access point. */
 };
 
 /**
- * DTLS message.
+ * nss_capwap_dtls_msg
+ *	DTLS message information.
  */
 struct nss_capwap_dtls_msg {
-	uint32_t enable;	/**< Enable/disable DTLS */
-	uint32_t dtls_if_num;	/**< Associated DTLS if num */
-	uint32_t mtu_adjust;	/**< MTU adjust reported by DTLS node */
-	uint32_t reserved;	/**< Padding */
+	uint32_t enable;			/**< Enable or disable DTLS. */
+	uint32_t dtls_inner_if_num;	/**< Interface number of the associated DTLS. */
+	uint32_t mtu_adjust;		/**< MTU adjustment reported by the DTLS node. */
+	uint32_t reserved;			/**< Reserved field for future use. */
 };
 
 /**
- * The CAPWAP message structure.
+ * nss_capwap_flow_rule_msg
+ *	CAPWAP flow rule message structure.
+ */
+struct nss_capwap_flow_rule_msg {
+	/*
+	 * 5-tuple info.
+	 */
+	uint16_t ip_version;            /**< IP version. */
+	uint16_t protocol;              /**< Layer 4 protocol. */
+	uint16_t src_port;		/**< Source port. */
+	uint16_t dst_port;		/**< Destination port. */
+	uint32_t src_ip[4];		/**< Source IP address. */
+	uint32_t dst_ip[4];		/**< Destination IP address. */
+
+	/*
+	 * Flow attributes.
+	 */
+	uint32_t flow_id;		/**< Flow identification. */
+};
+
+/**
+ * nss_capwap_msg
+ *	Data for sending and receiving CAPWAP messages.
  */
 struct nss_capwap_msg {
-	struct nss_cmn_msg cm;				/**< Message Header */
+	struct nss_cmn_msg cm;		/**< Common message header. */
+
+	/**
+	 * Payload of a CAPWAP common message.
+	 */
 	union {
-		struct nss_capwap_rule_msg rule;	/**< Rule information */
-		struct nss_capwap_path_mtu_msg mtu;	/**< New MTU information */
-		struct nss_capwap_stats_msg stats;	/**< CAPWAP Statistics */
-		struct nss_capwap_version_msg version;	/**< CAPWAP version to use */
-		struct nss_capwap_dtls_msg dtls;	/**< DTLS configuration */
-	} msg;
+		struct nss_capwap_rule_msg rule;
+				/**< Rule information. */
+		struct nss_capwap_path_mtu_msg mtu;
+				/**< New MTU information. */
+		struct nss_capwap_stats_msg stats;
+				/**< CAPWAP statistics. */
+		struct nss_capwap_version_msg version;
+				/**< CAPWAP version to use. */
+		struct nss_capwap_dtls_msg dtls;
+				/**< DTLS configuration. */
+		struct nss_capwap_flow_rule_msg flow_rule_add;
+				/**< Flow rule add message. */
+		struct nss_capwap_flow_rule_msg flow_rule_del;
+				/**< Flow rule delete message. */
+	} msg;			/**< Message payload. */
 };
 
 /**
- * 64-bit version of pnode_stats.
+ * nss_capwap_pn_stats
+ *	Pnode statistics (64-bit version).
  */
 struct nss_capwap_pn_stats {
-	uint64_t rx_packets;	/**< Number of packets received */
-	uint64_t rx_bytes;	/**< Number of bytes received */
-	uint64_t rx_dropped;	/**< Number of RX dropped packets */
-	uint64_t tx_packets;	/**< Number of packets transmitted */
-	uint64_t tx_bytes;	/**< Number of bytes transmitted */
+	uint64_t rx_packets;		/**< Number of packets received. */
+	uint64_t rx_bytes;		/**< Number of bytes received. */
+	uint64_t rx_dropped;		/**< Number of dropped Rx packets. */
+	uint64_t tx_packets;		/**< Number of packets transmitted. */
+	uint64_t tx_bytes;		/**< Number of bytes transmitted. */
 };
 
 /**
- * Per-tunnel statistics seen by HLOS
+ * nss_capwap_tunnel_stats
+ *	Per-tunnel statistics seen by the HLOS.
  */
 struct nss_capwap_tunnel_stats {
-	struct nss_capwap_pn_stats pnode_stats;	/**< NSS FW common stats */
-	uint64_t dtls_pkts;			/**< Number of DTLS pkts flowing through */
+	struct nss_capwap_pn_stats pnode_stats;	/**< Common firmware statistics. */
+	uint64_t dtls_pkts;		/**< Number of DTLS packets flowing through. */
 
 	/*
 	 * Rx/decap stats
 	 */
-	uint64_t rx_dup_frag;		/**< Number of duplicate fragment */
-	uint64_t rx_segments;		/**< Number of segments/fragments */
-	uint64_t rx_oversize_drops;	/**< Size of packet > than payload size */
-	uint64_t rx_frag_timeout_drops;	/**< Drops due to reassembly timeout */
-	uint64_t rx_queue_full_drops;	/**< Drops due to queue full condition */
+	uint64_t rx_dup_frag;		/**< Number of duplicate fragments. */
+	uint64_t rx_segments;		/**< Number of segments or fragments. */
+
+	/**
+	 * Packets dropped because they are larger than the payload size.
+	 */
+	uint64_t rx_oversize_drops;
+
+	uint64_t rx_frag_timeout_drops;
+			/**< Packets dropped because of a reassembly timeout. */
+	uint64_t rx_queue_full_drops;
+			/**< Packets dropped because the queue is full. */
 	uint64_t rx_n2h_queue_full_drops;
-	uint64_t rx_csum_drops;		/**< Dropped RX packets due to checksum mismatch */
-	uint64_t rx_malformed;		/**< Malformed packet drops */
-	uint64_t rx_mem_failure_drops;	/**< Drops due to Memory Failure */
-	uint64_t rx_frag_gap_drops;	/**< Drops due to fragment-offset not being sequential */
+			/**< Packets dropped because the NSS-to-host queue is full. */
+	uint64_t rx_csum_drops;
+			/**< Packets dropped because of a checksum mismatch. */
+	uint64_t rx_malformed;
+			/**< Packets dropped because of a malformed packet. */
+	uint64_t rx_mem_failure_drops;
+			/**< Packets dropped because of a memory failure. */
+	uint64_t rx_frag_gap_drops;
+			/**< Packets dropped because of a non-sequential fragment offset. */
 
 	/*
 	 * Tx/encap stats
 	 */
-	uint64_t tx_segments;		/**< Number of segments/fragments */
-	uint64_t tx_queue_full_drops;	/**< Drops due to queue full condition */
-	uint64_t tx_mem_failure_drops;	/**< Drops due to Memory Failure */
-	uint64_t tx_dropped_sg_ref;	/**< TX dropped due to sg reference */
-	uint64_t tx_dropped_ver_mis;	/**< TX Dropped due to version mismatch */
-	uint64_t tx_dropped_unalign;	/**< TX Dropped due to unaligned active buffer */
-	uint64_t tx_dropped_hroom;	/**< TX Dropped due to insufficent headroom */
-	uint64_t tx_dropped_dtls;	/**< TX Dropped due to DTLS pkt */
-	uint64_t tx_dropped_nwireless;	/**< TX Dropped due to nwireless being wrong */
+	uint64_t tx_segments;		/**< Number of segments or fragments. */
+	uint64_t tx_queue_full_drops;
+			/**< Packets dropped because the queue is full. */
+	uint64_t tx_mem_failure_drops;
+			/**< Packets dropped because of a memory failure. */
+
+	uint64_t tx_dropped_sg_ref;
+			/**< Packets dropped because of a scatter-gather reference. */
+	uint64_t tx_dropped_ver_mis;
+			/**< Packets dropped because of a version mismatch. */
+	uint64_t Reserved;
+			/**< Reserved. */
+	uint64_t tx_dropped_hroom;
+			/**< Packets dropped because of insufficent headroom. */
+	uint64_t tx_dropped_dtls;
+			/**< Packets dropped because of a DTLS packet. */
+	uint64_t tx_dropped_nwireless;
+			/**< Packets dropped because the nwireless field information is wrong. */
+
+	uint32_t fast_mem;
+			/**< Set to 1 when tunnel is operating in fast memory. */
 };
 
 /**
- * @brief Callback to receive capwap tunnel data
+ * nss_capwap_stats_notification
+ *	CAPWAP statistics structure.
+ */
+struct nss_capwap_stats_notification {
+	uint32_t core_id;			/**< Core ID. */
+	uint32_t if_num;			/**< Interface number. */
+	struct nss_capwap_tunnel_stats stats;	/**< Per-tunnel statistics. */
+};
+
+#ifdef __KERNEL__ /* only kernel will use. */
+
+/**
+ * Callback function for receiving CAPWAP tunnel data.
  *
- * @param app_data Application context of the message
- * @param skb  Pointer to data buffer
+ * @datatypes
+ * net_device \n
+ * sk_buff \n
+ * napi_struct
  *
- * @return void
+ * @param[in] netdev  Pointer to the associated network device.
+ * @param[in] skb     Pointer to the data socket buffer.
+ * @param[in] napi    Pointer to the NAPI structure.
  */
 typedef void (*nss_capwap_buf_callback_t)(struct net_device *netdev, struct sk_buff *skb, struct napi_struct *napi);
 
 /**
- * @brief Callback to receive capwap tunnel messages
+ * Callback function for receiving CAPWAP tunnel messages.
  *
- * @param app_data Application context of the message
- * @param msg Message data
+ * @datatypes
+ * nss_capwap_msg
  *
- * @return void
+ * @param[in] app_data  Pointer to the application context of the message.
+ * @param[in] msg       Pointer to the message data.
  */
 typedef void (*nss_capwap_msg_callback_t)(void *app_data, struct nss_capwap_msg *msg);
 
 /**
- * @brief Register to send/receive capwap tunnel messages to NSS
+ * nss_capwap_data_register
+ *	Registers the CAPWAP tunnel interface with the NSS for sending and
+ *	receiving tunnel messages.
  *
- * @param if_num NSS interface number
- * @param capwap_callback Callback for capwap tunnel data
- * @param msg_callback Callback for capwap tunnel messages
- * @param netdev associated netdevice
- * @param features denote the skb types supported by this interface.
+ * @datatypes
+ * nss_capwap_buf_callback_t \n
+ * net_device
  *
- * @return nss_ctx_instance* NSS context
+ * @param[in] if_num           NSS interface number.
+ * @param[in] capwap_callback  Callback for the CAPWAP tunnel data.
+ * @param[in] netdev           Pointer to the associated network device.
+ * @param[in] features         Data socket buffer types supported by this interface.
+ *
+ * @return
+ * Pointer to the NSS core context.
  */
 extern struct nss_ctx_instance *nss_capwap_data_register(uint32_t if_num, nss_capwap_buf_callback_t capwap_callback, struct net_device *netdev, uint32_t features);
 
 /**
- * @brief Send CAPWAP tunnel messages.
+ * nss_capwap_tx_msg
+ *	Sends CAPWAP tunnel messages to the NSS.
  *
- * @param nss_ctx NSS context
- * @param msg NSS CAPWAP tunnel message
+ * Do not call this function from a softirq or interrupt because it
+ * might sleep if the NSS firmware is busy serving another host thread.
  *
- * @return nss_tx_status_t Tx status
+ * @datatypes
+ * nss_ctx_instance \n
+ * nss_capwap_msg
  *
- * @note Don't call this function from softirq/interrupt as it
- *	may sleep if NSS FW is busy serving another host thread.
+ * @param[in]     nss_ctx  Pointer to the NSS context.
+ * @param[in,out] msg      Pointer to the message data.
+ *
+ * @return
+ * Status of the Tx operation.
  */
 extern nss_tx_status_t nss_capwap_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_capwap_msg *msg);
 
 /**
- * @brief Send CAPWAP tunnel data buffer to NSS interface number
+ * nss_capwap_tx_buf
+ *	Sends a CAPWAP tunnel data buffer to the NSS interface.
  *
- * @param nss_ctx NSS context
- * @param skb_buff (or data buffer)
- * @param interface number
+ * @datatypes
+ * nss_ctx_instance \n
+ * sk_buff
  *
- * @return nss_tx_status_t Tx status
+ * @param[in] nss_ctx  Pointer to the NSS context.
+ * @param[in] os_buf   Pointer to the OS data buffer.
+ * @param[in] if_num   NSS interface number.
+ *
+ * @return
+ * Status of the Tx operation.
  */
 extern nss_tx_status_t nss_capwap_tx_buf(struct nss_ctx_instance *nss_ctx, struct sk_buff *os_buf, uint32_t if_num);
 
 /**
- * @brief Unregister capwap tunnel interface with NSS
+ * nss_capwap_data_unregister
+ *	Deregisters the CAPWAP tunnel interface from the NSS interface.
  *
- * @param if_num NSS interface number
+ * @param[in] if_num  NSS interface number.
  *
- * @return true or false
+ * @return
+ * TRUE or FALSE
+ *
+ * @dependencies
+ * The tunnel interface must have been previously registered.
  */
 extern bool nss_capwap_data_unregister(uint32_t if_num);
 
 /**
- * @brief register a event callback handler with HLOS driver.
+ * nss_capwap_notify_register
+ *	Registers an event callback handler with the HLOS driver.
  *
- * @param if_num - interface number
- * @param cb event callback function
- * @param app_data context of the callback user
+ * @datatypes
+ * nss_capwap_msg_callback_t
  *
- * @return nss context
+ * @param[in] if_num    NSS interface number.
+ * @param[in] cb        Callback function for the message.
+ * @param[in] app_data  Pointer to the application context of the message.
  *
- * @note This function shouldn't be called from softirq or interrupt.
+ * @return
+ * Pointer to the NSS core context.
  */
 extern struct nss_ctx_instance *nss_capwap_notify_register(uint32_t if_num, nss_capwap_msg_callback_t cb, void *app_data);
 
 /**
- * @brief unregister the message notifier
+ * nss_capwap_notify_unregister
+ *	Deregisters a message notifier from the HLOS driver.
  *
- * @param ctx HLOS driver's context
- * @param if_num interface number to unregister from
+ * @datatypes
+ * nss_ctx_instance
+ *
+ * @param[in] ctx     Pointer to the context of the HLOS driver.
+ * @param[in] if_num  NSS interface number.
  *
  * @return
+ * None.
  *
- * @note This function shouldn't be called from softirq or interrupt.
+ * @dependencies
+ * The message notifier must have been previously registered.
  */
 extern nss_tx_status_t nss_capwap_notify_unregister(struct nss_ctx_instance *ctx, uint32_t if_num);
 
 /**
- * @brief Gets NSS context
+ * nss_capwap_get_ctx
+ *	Gets the NSS context.
  *
- * @param None
- *
- * @return Pointer to struct nss_ctx_instance
+ * @return
+ * Pointer to the NSS core context.
  */
 extern struct nss_ctx_instance *nss_capwap_get_ctx(void);
 
 /**
- * @brief Gets capwap interface num with core id
+ * nss_capwap_ifnum_with_core_id
+ *	Gets the CAPWAP interface number with the core ID.
  *
- * @param if_num interface number
+ * @param[in] if_num  NSS interface number.
  *
- * @return interface number with core id
+ * @return
+ * Interface number with the core ID.
  */
 extern int nss_capwap_ifnum_with_core_id(int if_num);
 
 /**
- * @brief Gets NSS max_buf_size
+ * nss_capwap_get_max_buf_size
+ *	Gets the NSS maximum buffer size.
  *
- * @param NSS context
+ * @param[in] nss_ctx  Pointer to the NSS context.
  *
- * @return ctx->max_buf_size.
+ * @return
+ * Maximum buffer size of this NSS core.
  */
 extern uint32_t nss_capwap_get_max_buf_size(struct nss_ctx_instance *nss_ctx);
 
 /**
- * @brief Return per-tunnel statistics
+ * nss_capwap_get_stats
+ *	Gets per-tunnel statistics.
  *
- * @param interface numbe
- * @param pointer to struct nss_capwap_tunnel_stats
+ * @datatypes
+ * nss_capwap_tunnel_stats
  *
- * @return true or false
+ * @param[in]  if_num  NSS interface number.
+ * @param[out] stats   Pointer to the CAPWAP tunnel statistics.
+ *
+ * @return
+ * TRUE or FALSE.
  */
 extern bool nss_capwap_get_stats(uint32_t if_num, struct nss_capwap_tunnel_stats *stats);
 
 /**
- * @brief Initialize CAPWAP
+ * nss_capwap_init
+ *	Initializes the CAPWAP interface.
  *
- * @return None
+ * @return
+ * None.
  */
 extern void nss_capwap_init(void);
 
 /**
- * @brief Initialize capwap msg
+ * nss_capwap_msg_init
+ *	Initializes a CAPWAP message.
  *
- * @return None
+ * @datatypes
+ * nss_capwap_msg \n
+ * nss_capwap_msg_callback_t
+ *
+ * @param[in,out] ncm       Pointer to the message.
+ * @param[in]     if_num    NSS interface number.
+ * @param[in]     type      Type of message.
+ * @param[in]     len       Size of the payload.
+ * @param[in]     cb        Callback function for the message.
+ * @param[in]     app_data  Pointer to the application context of the message.
+ *
+ * @return
+ * None.
  */
 extern void nss_capwap_msg_init(struct nss_capwap_msg *ncm, uint16_t if_num, uint32_t type, uint32_t len,
-                                nss_capwap_msg_callback_t cb, void *app_data);
+								nss_capwap_msg_callback_t cb, void *app_data);
+/**
+ * nss_capwap_stats_register_notifier
+ *	Registers a statistics notifier.
+ *
+ * @datatypes
+ * notifier_block
+ *
+ * @param[in] nb Notifier block.
+ *
+ * @return
+ * 0 on success or -2 on failure.
+ */
+extern int nss_capwap_stats_register_notifier(struct notifier_block *nb);
+
+/**
+ * nss_capwap_stats_unregister_notifier
+ *	Deregisters a statistics notifier.
+ *
+ * @datatypes
+ * notifier_block
+ *
+ * @param[in] nb Notifier block.
+ *
+ * @return
+ * 0 on success or -2 on failure.
+ */
+extern int nss_capwap_stats_unregister_notifier(struct notifier_block *nb);
+
+/**
+ * @}
+ */
+
+#endif /* __KERNEL__ */
 #endif /* __NSS_CAPWAP_H */

@@ -49,6 +49,10 @@ ifeq ($(CONFIG_TARGET_ipq806x),y)
 subtarget:=ipq806x
 endif
 
+define Build/Configure
+	$(LN) arch/nss_$(subtarget).h $(PKG_BUILD_DIR)/exports/nss_arch.h
+endef
+
 define Build/Compile
 	$(MAKE) $(PKG_JOBS) -C "$(LINUX_DIR)" \
 		$(KERNEL_MAKE_FLAGS) \

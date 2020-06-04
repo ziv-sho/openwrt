@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -20,12 +20,7 @@
 #include "nss_tx_rx_common.h"
 #include <nss_gmac_api_if.h>
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
-#define NSS_DP_GMAC_SUPPORTED_FEATURES (NETIF_F_HIGHDMA | NETIF_F_HW_CSUM | NETIF_F_RXCSUM | NETIF_F_SG | NETIF_F_FRAGLIST | (NETIF_F_TSO | NETIF_F_TSO6))
-#else
 #define NSS_DP_GMAC_SUPPORTED_FEATURES (NETIF_F_HIGHDMA | NETIF_F_HW_CSUM | NETIF_F_RXCSUM | NETIF_F_SG | NETIF_F_FRAGLIST | (NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_UFO))
-#endif /*KERNEL_VERSION(4, 14, 0)*/
-
 #define NSS_DATA_PLANE_GMAC_MAX_INTERFACES 4
 
 static DEFINE_SPINLOCK(nss_data_plane_gmac_stats_lock);
@@ -214,17 +209,14 @@ static bool nss_data_plane_register_to_nss_gmac(struct nss_ctx_instance *nss_ctx
 	 * be redirected to the gmac driver as we are overriding the data plane
 	 */
 	nss_top->phys_if_handler_id[if_num] = nss_ctx->id;
-	nss_phys_if_register_handler(if_num);
+	nss_phys_if_register_handler(nss_ctx, if_num);
 
 	/*
 	 * Packets recieved on physical interface can be exceptioned to HLOS
 	 * from any NSS core so we need to register data plane for all
 	 */
-	for (core = 0; core < NSS_MAX_CORES; core++) {
-		nss_top->nss[core].subsys_dp_register[if_num].ndev = netdev;
-		nss_top->nss[core].subsys_dp_register[if_num].cb = nss_gmac_receive;
-		nss_top->nss[core].subsys_dp_register[if_num].app_data = NULL;
-		nss_top->nss[core].subsys_dp_register[if_num].features = ndpp->features;
+	for (core = 0; core < nss_top->num_nss; core++) {
+		nss_core_register_subsys_dp(&nss_top->nss[core], if_num, nss_gmac_receive, NULL, NULL, netdev, ndpp->features);
 	}
 
 	/*
@@ -272,11 +264,11 @@ static void __nss_data_plane_unregister(void)
 {
 	int i, core;
 
-	for (core = 0; core < NSS_MAX_CORES; core++) {
+	for (core = 0; core < nss_top_main.num_nss; core++) {
 		for (i = 0; i < NSS_DATA_PLANE_GMAC_MAX_INTERFACES; i++) {
 			if (nss_top_main.nss[core].subsys_dp_register[i].ndev) {
 				nss_data_plane_unregister_from_nss_gmac(i);
-				nss_top_main.nss[core].subsys_dp_register[i].ndev = NULL;
+				nss_core_unregister_subsys_dp(&nss_top_main.nss[core], i);
 			}
 		}
 	}
@@ -339,7 +331,6 @@ static void __nss_data_plane_stats_sync(struct nss_phys_if_stats *stats, uint16_
 	gmac_stats->gmac_worst_case_ticks += stats->estats.gmac_worst_case_ticks;
 	gmac_stats->gmac_iterations += stats->estats.gmac_iterations;
 	gmac_stats->tx_pause_frames += stats->estats.tx_pause_frames;
-
 	gmac_stats->mmc_rx_overflow_errors += stats->estats.mmc_rx_overflow_errors;
 	gmac_stats->mmc_rx_watchdog_timeout_errors += stats->estats.mmc_rx_watchdog_timeout_errors;
 	gmac_stats->mmc_rx_crc_errors += stats->estats.mmc_rx_crc_errors;
@@ -403,4 +394,3 @@ struct nss_data_plane_ops nss_data_plane_gmac_ops = {
 	.data_plane_stats_sync = &__nss_data_plane_stats_sync,
 	.data_plane_get_mtu_sz = &__nss_data_plane_get_mtu_sz,
 };
-

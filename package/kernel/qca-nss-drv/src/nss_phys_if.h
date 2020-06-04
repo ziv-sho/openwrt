@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -100,7 +100,7 @@ struct nss_phys_if_estats {
  * The NSS GMAC statistics sync structure.
  */
 struct nss_phys_if_stats {
-	struct nss_if_stats if_stats;		/**< Generic interface stats */
+	struct nss_cmn_node_stats if_stats;		/**< Generic interface stats */
 	struct nss_phys_if_estats estats;	/**< Extended Statistics specific to GMAC */
 };
 
@@ -123,6 +123,7 @@ enum nss_phys_if_msg_types {
 	NSS_PHYS_IF_PAUSE_ON_OFF = NSS_IF_PAUSE_ON_OFF,
 	NSS_PHYS_IF_VSI_ASSIGN = NSS_IF_VSI_ASSIGN,
 	NSS_PHYS_IF_VSI_UNASSIGN = NSS_IF_VSI_UNASSIGN,
+	NSS_PHYS_IF_SET_NEXTHOP = NSS_IF_SET_NEXTHOP,
 	NSS_PHYS_IF_EXTENDED_STATS_SYNC = NSS_IF_MAX_MSG_TYPES + 1,
 	NSS_PHYS_IF_MAX_MSG_TYPES
 };
@@ -151,6 +152,16 @@ struct nss_phys_if_msg {
  * @return void
  */
 typedef void (*nss_phys_if_msg_callback_t)(void *app_data, struct nss_phys_if_msg *msg);
+
+/**
+ * @brief Callback to send physical interface data to the tranmsit path.
+ *
+ * @param netdev Net device
+ * @param skb Data buffer
+ *
+ * @return void
+ */
+typedef void (*nss_phys_if_xmit_callback_t)(struct net_device *netdev, struct sk_buff *skb);
 
 /**
  * @brief Callback to receive physical interface data

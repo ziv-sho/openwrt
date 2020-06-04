@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -46,7 +46,6 @@ static int8_t *nss_ipv4_log_error_response_types_str[NSS_IPV4_LAST] __maybe_unus
 	"Invalid interface number",
 	"Missing connection rule",
 	"Buffer allocation failure",
-	"Unable to create PPPoE session",
 	"No connection found to delete",
 	"Conn cfg already done once",
 	"Conn cfg input is not multiple of quanta",
@@ -82,10 +81,10 @@ static void nss_ipv4_log_rule_create_msg(struct nss_ipv4_msg *nim)
 		"egress_outer_vlan_tag: %u\n"
 		"rule_flags: %x\n"
 		"valid_flags: %x\n"
-		"return_pppoe_session_id: %u\n"
-		"return_pppoe_remote_mac: %pM\n"
-		"flow_pppoe_session_id: %u\n"
-		"flow_pppoe_remote_mac: %pM\n"
+		"return_pppoe_if_exist: %u\n"
+		"return_pppoe_if_num: %u\n"
+		"flow_pppoe_if_exist: %u\n"
+		"flow_pppoe_if_num: %u\n"
 		"flow_qos_tag: %x (%u)\n"
 		"return_qos_tag: %x (%u)\n"
 		"flow_dscp: %x\n"
@@ -108,10 +107,10 @@ static void nss_ipv4_log_rule_create_msg(struct nss_ipv4_msg *nim)
 		nircm->vlan_secondary_rule.egress_vlan_tag,
 		nircm->rule_flags,
 		nircm->valid_flags,
-		nircm->pppoe_rule.return_pppoe_session_id,
-		nircm->pppoe_rule.return_pppoe_remote_mac,
-		nircm->pppoe_rule.flow_pppoe_session_id,
-		nircm->pppoe_rule.flow_pppoe_remote_mac,
+		nircm->pppoe_rule.return_if_exist,
+		nircm->pppoe_rule.return_if_num,
+		nircm->pppoe_rule.flow_if_exist,
+		nircm->pppoe_rule.flow_if_num,
 		nircm->qos_rule.flow_qos_tag, nircm->qos_rule.flow_qos_tag,
 		nircm->qos_rule.return_qos_tag, nircm->qos_rule.return_qos_tag,
 		nircm->dscp_rule.flow_dscp,
@@ -327,7 +326,7 @@ void nss_ipv4_log_rx_msg(struct nss_ipv4_msg *nim)
 		return;
 	}
 
-	if (nim->cm.response == NSS_CMM_RESPONSE_NOTIFY || (nim->cm.response == NSS_CMN_RESPONSE_ACK)) {
+	if (nim->cm.response == NSS_CMN_RESPONSE_NOTIFY || (nim->cm.response == NSS_CMN_RESPONSE_ACK)) {
 		nss_info("%p: type[%d]:%s, response[%d]:%s\n", nim, nim->cm.type,
 			nss_ipv4_log_message_types_str[nim->cm.type],
 			nim->cm.response, nss_cmn_response_str[nim->cm.response]);

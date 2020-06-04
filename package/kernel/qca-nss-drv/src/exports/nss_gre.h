@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -41,28 +41,49 @@
 #define NSS_GRE_CONFIG_OKEY_VALID	0x00000002	/**< Key for outgoing GRE header. */
 #define NSS_GRE_CONFIG_ISEQ_VALID	0x00000004	/**< Enable sequence checking for incoming GRE traffic. */
 #define NSS_GRE_CONFIG_OSEQ_VALID	0x00000008	/**< Add sequence number for out going GRE packets. */
-#define NSS_GRE_CONFIG_ICSUM_VALID	0x00000010	/**< Validate incoming GRE header Checksum. */
-#define NSS_GRE_CONFIG_OCSUM_VALID	0x00000020	/**< Add CS header to GRE header*/
+#define NSS_GRE_CONFIG_ICSUM_VALID	0x00000010	/**< Validate incoming GRE header checksum. */
+#define NSS_GRE_CONFIG_OCSUM_VALID	0x00000020	/**< Add checksum header to GRE header. */
 #define NSS_GRE_CONFIG_TOS_INHERIT	0x00000040	/**< Inherit inner IP TOS to tunnel header, if not set configure provided TOS. */
 #define NSS_GRE_CONFIG_TTL_INHERIT	0x00000080	/**< Inherit inner IP TTL to tunnel header, if not set configure provided TTL. */
 #define NSS_GRE_CONFIG_SET_DF		0x00000100	/**< Enable DF bit on tunnel IP header. */
 #define NSS_GRE_CONFIG_SET_MAC		0x00000200	/**< Add MAC header to GRE+IP tunnel header. */
 #define NSS_GRE_CONFIG_SET_PADDING	0x00000400	/**< Add PADDING to align tunnel IP/GRE header. */
-#define NSS_GRE_CONFIG_NEXT_NODE_AVAILABLE  0x00000800	/**< Use provided next_node instead of existing next node. */
+#define NSS_GRE_CONFIG_NEXT_NODE_AVAILABLE  0x00000800	/**< Use provided next node instead of existing next node. */
+#define NSS_GRE_CONFIG_COPY_METADATA 	0x00001000	/**< Enable metadata copy in NSS during alignment. */
+#define NSS_GRE_CONFIG_USE_UNALIGNED 	0x00002000	/**< Use unaligned infrastructure in NSS. */
+#define NSS_GRE_CONFIG_DSCP_VALID	0x00004000	/**< Add DSCP per packet. */
+
+/**
+ * nss_gre_error_types.
+ *	Error types for GRE configuration messages.
+ */
+enum nss_gre_error_types {
+	NSS_GRE_ERR_UNKNOWN_MSG = 1,		/**< Unknown message. */
+	NSS_GRE_ERR_IF_INVALID = 2,		/**< Invalid interface. */
+	NSS_GRE_ERR_MODE_INVALID = 3,		/**< Invalid mode type. */
+	NSS_GRE_ERR_IP_INVALID = 4,		/**< Invalid IP type. */
+	NSS_GRE_ERR_GRE_SESSION_PARAMS_INVALID = 5,	/**< Invalid GRE session parameters provided. */
+	NSS_GRE_ERR_DSCP_CFG_INVALID = 6,	/**< Both TOS and DSCP flags are enabled. */
+	NSS_GRE_ERR_MAX,			/**< Maximum GRE error. */
+};
 
 /**
  * nss_gre_info
  *	GRE private information.
  */
 struct nss_gre_info {
+	/**
+	 * Union of IPv4/IPv6 tunnel.
+	 */
 	union {
-		struct ip_tunnel t4;	/**< IPv4 tunnel */
-		struct ip6_tnl t6;	/**< IPv6 tunnel */
-	} t;
-	int nss_if_number;		/**< NSS interface number */
-	struct net_device *next_dev;	/**< Next net device */
-	uint8_t gre_hlen;		/**< GRE header length */
-	uint8_t pad_len;		/**< Pad length */
+		struct ip_tunnel t4;		/**< IPv4 tunnel. */
+		struct ip6_tnl t6;		/**< IPv6 tunnel. */
+	} t;		/**< IPv4 and IPv6 tunnel. */
+	int nss_if_number_inner;		/**< NSS interface number for GRE inner. */
+	struct net_device *next_dev_inner;	/**< Next network device for inner flow. */
+	struct net_device *next_dev_outer;	/**< Next network device for outer flow. */
+	uint8_t gre_hlen;			/**< GRE header length. */
+	uint8_t pad_len;			/**< Pad length. */
 };
 
 /**
@@ -70,8 +91,10 @@ struct nss_gre_info {
  *	Message types for GRE requests and responses.
  */
 enum nss_gre_msg_types {
-	NSS_GRE_MSG_CONFIGURE = NSS_IF_MAX_MSG_TYPES + 1,
-	NSS_GRE_MSG_DECONFIGURE,
+	NSS_GRE_MSG_ENCAP_CONFIGURE = NSS_IF_MAX_MSG_TYPES + 1,
+	NSS_GRE_MSG_DECAP_CONFIGURE,
+	NSS_GRE_MSG_ENCAP_DECONFIGURE,
+	NSS_GRE_MSG_DECAP_DECONFIGURE,
 	NSS_GRE_MSG_SESSION_STATS,
 	NSS_GRE_MSG_BASE_STATS,
 	NSS_GRE_MSG_MAX
@@ -151,11 +174,12 @@ struct nss_gre_config_msg {
 	uint32_t mode;				/**< GRE TUN or TAP. */
 	uint32_t ip_type;			/**< IPv4 or IPv6 type. */
 	uint32_t next_node_if_num;		/**< To whom to forward packets. */
+	uint32_t sibling_if_num;        	/**< Sibling interface number. */
 	uint16_t src_mac[3];			/**< Source MAC address. */
 	uint16_t dest_mac[3];			/**< Destination MAC address. */
 	uint8_t ttl;				/**< TTL or HOPLIMIT. */
 	uint8_t tos;				/**< Type of service. */
-	uint16_t reserved;			/**< Padding Reservation. */
+	uint16_t metadata_size;			/**< Metadata copy size. */
 };
 
 /**
@@ -283,6 +307,18 @@ extern nss_tx_status_t nss_gre_tx_buf(struct nss_ctx_instance *nss_ctx, uint32_t
 extern struct nss_ctx_instance *nss_gre_get_context(void);
 
 /**
+ *
+ * nss_gre_ifnum_with_core_id
+ * 	Append core ID on GRE interface.
+ *
+ * @param[in] if_num   NSS interface number.
+ *
+ * @return
+ * GRE interface number with core ID.
+ */
+extern int nss_gre_ifnum_with_core_id(int if_num);
+
+/**
  * Callback function for receiving GRE session data.
  *
  * @datatypes
@@ -297,32 +333,6 @@ extern struct nss_ctx_instance *nss_gre_get_context(void);
 typedef void (*nss_gre_data_callback_t)(struct net_device *netdev, struct sk_buff *skb, struct napi_struct *napi);
 
 /**
- * nss_gre_base_debug_stats_get
- *	Gets NSS GRE base debug statistics.
- *
- * @param[in]  stats_mem  Pointer to memory to which stats should be copied.
- * @param[in]  size 	  Stats memory size.
- * @param[out] stats_mem  Pointer to the memory address, which must be large
- *                         enough to hold all the statistics.
- * @return
- * None.
- */
-extern void nss_gre_base_debug_stats_get(void *stats_mem, int size);
-
-/**
- * nss_gre_session_debug_stats_get
- *	Gets NSS GRE session debug statistics.
- *
- * @param[in]  stats_mem  Pointer to memory to which stats should be copied.
- * @param[in]  size 	  Stats memory size.
- * @param[out] stats_mem  Pointer to the memory address, which must be large
- *                         enough to hold all the statistics.
- * @return
- * None.
- */
-extern void nss_gre_session_debug_stats_get(void *stats_mem, int size);
-
-/**
  * nss_gre_register_if
  *	Registers the GRE interface with the NSS for sending and
  *	receiving messages.
@@ -332,16 +342,17 @@ extern void nss_gre_session_debug_stats_get(void *stats_mem, int size);
  * nss_gre_msg_callback_t \n
  * net_device
  *
- * @param[in] if_num		     NSS interface number.
- * @param[in] nss_gre_data_callback  Callback for the data.
- * @param[in] msg_callback	     Callback for the message.
- * @param[in] netdev		     Pointer to the associated network device.
- * @param[in] features		     Socket buffer types supported by this interface.
+ * @param[in] if_num         NSS interface number.
+ * @param[in] type           NSS interface type.
+ * @param[in] gre_callback   Callback for the data.
+ * @param[in] msg_callback   Callback for the message.
+ * @param[in] netdev         Pointer to the associated network device.
+ * @param[in] features       Socket buffer types supported by this interface.
  *
  * @return
  * Pointer to the NSS core context.
  */
-extern struct nss_ctx_instance *nss_gre_register_if(uint32_t if_num, nss_gre_data_callback_t gre_callback,
+extern struct nss_ctx_instance *nss_gre_register_if(uint32_t if_num, uint32_t type, nss_gre_data_callback_t gre_callback,
 					nss_gre_msg_callback_t msg_callback, struct net_device *netdev, uint32_t features);
 
 /**

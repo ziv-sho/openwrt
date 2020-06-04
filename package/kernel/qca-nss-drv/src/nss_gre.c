@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -15,6 +15,8 @@
  */
 
 #include "nss_tx_rx_common.h"
+#include "nss_gre_stats.h"
+#include "nss_gre_log.h"
 
 #define NSS_GRE_TX_TIMEOUT 3000 /* 3 Seconds */
 
@@ -30,19 +32,15 @@ static struct {
 } nss_gre_pvt;
 
 /*
- * Data structures to store GRE nss debug stats
+ * TODO: Register separate callbacks for inner and outer GRE nodes.
  */
-static DEFINE_SPINLOCK(nss_gre_stats_lock);
-static struct nss_stats_gre_session_debug session_debug_stats[NSS_GRE_MAX_DEBUG_SESSION_STATS];
-static struct nss_stats_gre_base_debug base_debug_stats;
-
 static atomic64_t pkt_cb_addr = ATOMIC64_INIT(0);
 
 /*
- * nss_gre_rx_handler()
- *	GRE rx handler.
+ * nss_gre_inner_rx_handler()
+ *	GRE inner rx handler.
  */
-static void nss_gre_rx_handler(struct net_device *dev, struct sk_buff *skb,
+static void nss_gre_inner_rx_handler(struct net_device *dev, struct sk_buff *skb,
 		    __attribute__((unused)) struct napi_struct *napi)
 {
 	nss_gre_data_callback_t cb;
@@ -50,46 +48,34 @@ static void nss_gre_rx_handler(struct net_device *dev, struct sk_buff *skb,
 	nss_gre_pkt_callback_t scb = (nss_gre_pkt_callback_t)(unsigned long)atomic64_read(&pkt_cb_addr);
 	if (unlikely(scb)) {
 		struct nss_gre_info *info = (struct nss_gre_info *)netdev_priv(dev);
-		if (likely(info->next_dev)) {
-			scb(info->next_dev, skb);
+		if (likely(info->next_dev_inner)) {
+			scb(info->next_dev_inner, skb);
 		}
 	}
 
-	cb = nss_top_main.gre_data_callback;
+	cb = nss_top_main.gre_inner_data_callback;
 	cb(dev, skb, 0);
 }
 
 /*
- * nss_gre_session_debug_stats_sync()
- *	debug statistics sync for GRE session.
+ * nss_gre_outer_rx_handler()
+ *	GRE outer rx handler.
  */
-static void nss_gre_session_debug_stats_sync(struct nss_ctx_instance *nss_ctx, struct nss_gre_session_stats_msg *sstats, uint16_t if_num)
+static void nss_gre_outer_rx_handler(struct net_device *dev, struct sk_buff *skb,
+		    __attribute__((unused)) struct napi_struct *napi)
 {
-	int i, j;
-	spin_lock_bh(&nss_gre_stats_lock);
-	for (i = 0; i < NSS_GRE_MAX_DEBUG_SESSION_STATS; i++) {
-		if (session_debug_stats[i].if_num == if_num) {
-			for (j = 0; j < NSS_STATS_GRE_SESSION_DEBUG_MAX; j++) {
-				session_debug_stats[i].stats[j] += sstats->stats[j];
-			}
-			break;
+	nss_gre_data_callback_t cb;
+
+	nss_gre_pkt_callback_t scb = (nss_gre_pkt_callback_t)(unsigned long)atomic64_read(&pkt_cb_addr);
+	if (unlikely(scb)) {
+		struct nss_gre_info *info = (struct nss_gre_info *)netdev_priv(dev);
+		if (likely(info->next_dev_outer)) {
+			scb(info->next_dev_outer, skb);
 		}
 	}
-	spin_unlock_bh(&nss_gre_stats_lock);
-}
 
-/*
- * nss_gre_base_debug_stats_sync()
- *	Debug statistics sync for GRE base node.
- */
-static void nss_gre_base_debug_stats_sync(struct nss_ctx_instance *nss_ctx, struct nss_gre_base_stats_msg *bstats)
-{
-	int i;
-	spin_lock_bh(&nss_gre_stats_lock);
-	for (i = 0; i < NSS_STATS_GRE_BASE_DEBUG_MAX; i++) {
-		base_debug_stats.stats[i] += bstats->stats[i];
-	}
-	spin_unlock_bh(&nss_gre_stats_lock);
+	cb = nss_top_main.gre_outer_data_callback;
+	cb(dev, skb, 0);
 }
 
 /*
@@ -105,6 +91,11 @@ static void nss_gre_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn
 
 	NSS_VERIFY_CTX_MAGIC(nss_ctx);
 	BUG_ON(!(nss_is_dynamic_interface(ncm->interface) || ncm->interface == NSS_GRE_INTERFACE));
+
+	/*
+	 * Trace Messages
+	 */
+	nss_gre_log_rx_msg(ntm);
 
 	/*
 	 * Is this a valid request/response packet?
@@ -124,11 +115,11 @@ static void nss_gre_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn
 		/*
 		 * debug stats embedded in stats msg
 		 */
-		nss_gre_session_debug_stats_sync(nss_ctx, &ntm->msg.sstats, ncm->interface);
+		nss_gre_stats_session_debug_sync(nss_ctx, &ntm->msg.sstats, ncm->interface);
 		break;
 
 	case NSS_GRE_MSG_BASE_STATS:
-		nss_gre_base_debug_stats_sync(nss_ctx, &ntm->msg.bstats);
+		nss_gre_stats_base_debug_sync(nss_ctx, &ntm->msg.bstats);
 		break;
 
 	default:
@@ -140,7 +131,7 @@ static void nss_gre_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn
 	 * Update the callback and app_data for NOTIFY messages, gre sends all notify messages
 	 * to the same callback/app_data.
 	 */
-	if (ncm->response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (ncm->response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = (nss_ptr_t)nss_ctx->nss_top->gre_msg_callback;
 		ncm->app_data = (nss_ptr_t)nss_ctx->subsys_dp_register[ncm->interface].app_data;
 	}
@@ -195,53 +186,6 @@ static void nss_gre_callback(void *app_data, struct nss_gre_msg *nim)
 }
 
 /*
- * nss_gre_session_debug_stats_get()
- *	Get GRE session debug statistics.
- */
-void nss_gre_session_debug_stats_get(void *stats_mem, int size)
-{
-	struct nss_stats_gre_session_debug *stats = (struct nss_stats_gre_session_debug *)stats_mem;
-	int i;
-
-	if (!stats || (size < (sizeof(struct nss_stats_gre_session_debug) * NSS_STATS_GRE_SESSION_DEBUG_MAX)))  {
-		nss_warning("No memory to copy gre stats");
-		return;
-	}
-
-	spin_lock_bh(&nss_gre_stats_lock);
-	for (i = 0; i < NSS_GRE_MAX_DEBUG_SESSION_STATS; i++) {
-		if (session_debug_stats[i].valid) {
-			memcpy(stats, &session_debug_stats[i], sizeof(struct nss_stats_gre_session_debug));
-			stats++;
-		}
-	}
-	spin_unlock_bh(&nss_gre_stats_lock);
-}
-
-/*
- * nss_gre_base_debug_stats_get()
- *	Get GRE debug base statistics.
- */
-void nss_gre_base_debug_stats_get(void *stats_mem, int size)
-{
-	struct nss_stats_gre_base_debug *stats = (struct nss_stats_gre_base_debug *)stats_mem;
-
-	if (!stats) {
-		nss_warning("No memory to copy GRE base stats\n");
-		return;
-	}
-
-	if (size < sizeof(struct nss_stats_gre_base_debug)) {
-		nss_warning("Not enough memory to copy GRE base stats\n");
-		return;
-	}
-
-	spin_lock_bh(&nss_gre_stats_lock);
-	memcpy(stats, &base_debug_stats, sizeof(struct nss_stats_gre_base_debug));
-	spin_unlock_bh(&nss_gre_stats_lock);
-}
-
-/*
  * nss_gre_register_pkt_callback()
  *	Register for data callback.
  */
@@ -267,16 +211,7 @@ EXPORT_SYMBOL(nss_gre_unregister_pkt_callback);
  */
 nss_tx_status_t nss_gre_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_gre_msg *msg)
 {
-	struct nss_gre_msg *nm;
 	struct nss_cmn_msg *ncm = &msg->cm;
-	struct sk_buff *nbuf;
-	int32_t status;
-
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: gre msg dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
 
 	/*
 	 * Sanity check the message
@@ -291,38 +226,12 @@ nss_tx_status_t nss_gre_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_gre_
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_gre_msg)) {
-		nss_warning("%p: message length is invalid: %d", nss_ctx, nss_cmn_get_msg_len(ncm));
-		return NSS_TX_FAILURE;
-	}
-
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: msg dropped as command allocation failed", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
 	/*
-	 * Copy the message to our skb
+	 * Trace Messages
 	 */
-	nm = (struct nss_gre_msg *)skb_put(nbuf, sizeof(struct nss_gre_msg));
-	memcpy(nm, msg, sizeof(struct nss_gre_msg));
+	nss_gre_log_tx_msg(msg);
 
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: Unable to enqueue 'gre message'\n", nss_ctx);
-		if (status == NSS_CORE_STATUS_FAILURE_QUEUE) {
-			return NSS_TX_FAILURE_QUEUE;
-		}
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_CMD_REQ]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, msg, sizeof(*msg), NSS_NBUF_PAYLOAD_SIZE);
 }
 EXPORT_SYMBOL(nss_gre_tx_msg);
 
@@ -367,28 +276,7 @@ EXPORT_SYMBOL(nss_gre_tx_msg_sync);
  */
 nss_tx_status_t nss_gre_tx_buf(struct nss_ctx_instance *nss_ctx, uint32_t if_num, struct sk_buff *skb)
 {
-	int32_t status;
-
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: GRE std packet dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
-
-	status = nss_core_send_buffer(nss_ctx, if_num, skb, NSS_IF_DATA_QUEUE_0, H2N_BUFFER_PACKET, H2N_BIT_FLAG_VIRTUAL_BUFFER);
-	if (unlikely(status != NSS_CORE_STATUS_SUCCESS)) {
-		nss_warning("%p: Unable to enqueue GRE std packet\n", nss_ctx);
-		return NSS_TX_FAILURE_QUEUE;
-	}
-
-	/*
-	 * Kick the NSS awake so it can process our new entry.
-	 */
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_PACKET]);
-	return NSS_TX_SUCCESS;
-
+	return nss_core_send_packet(nss_ctx, skb, if_num, H2N_BIT_FLAG_VIRTUAL_BUFFER | H2N_BIT_FLAG_BUFFER_REUSABLE);
 }
 EXPORT_SYMBOL(nss_gre_tx_buf);
 
@@ -402,35 +290,37 @@ EXPORT_SYMBOL(nss_gre_tx_buf);
  * nss_gre_register_if()
  *	Register data and message handlers for GRE.
  */
-struct nss_ctx_instance *nss_gre_register_if(uint32_t if_num, nss_gre_data_callback_t data_callback,
+struct nss_ctx_instance *nss_gre_register_if(uint32_t if_num, uint32_t type, nss_gre_data_callback_t data_callback,
 			nss_gre_msg_callback_t event_callback, struct net_device *netdev, uint32_t features)
 {
 	struct nss_ctx_instance *nss_ctx = (struct nss_ctx_instance *)&nss_top_main.nss[nss_top_main.gre_handler_id];
-	int i = 0;
 
 	nss_assert(nss_ctx);
 	nss_assert(nss_is_dynamic_interface(if_num));
 
-	nss_ctx->subsys_dp_register[if_num].ndev = netdev;
-	nss_ctx->subsys_dp_register[if_num].cb = nss_gre_rx_handler;
-	nss_ctx->subsys_dp_register[if_num].app_data = netdev;
-	nss_ctx->subsys_dp_register[if_num].features = features;
+	switch (type) {
+	case NSS_DYNAMIC_INTERFACE_TYPE_GRE_INNER:
+		nss_core_register_subsys_dp(nss_ctx, if_num, nss_gre_inner_rx_handler, NULL, netdev, netdev, features);
+		nss_top_main.gre_inner_data_callback = data_callback;
+		break;
+
+	case NSS_DYNAMIC_INTERFACE_TYPE_GRE_OUTER:
+		nss_core_register_subsys_dp(nss_ctx, if_num, nss_gre_outer_rx_handler, NULL, netdev, netdev, features);
+		nss_top_main.gre_outer_data_callback = data_callback;
+		break;
+
+	default:
+		nss_warning("%p: Unable to register. Wrong interface type %d\n", nss_ctx, type);
+		return NULL;
+	}
+
+	nss_core_set_subsys_dp_type(nss_ctx, netdev, if_num, type);
 
 	nss_top_main.gre_msg_callback = event_callback;
-	nss_top_main.gre_data_callback = data_callback;
 
-	nss_core_register_handler(if_num, nss_gre_msg_handler, NULL);
+	nss_core_register_handler(nss_ctx, if_num, nss_gre_msg_handler, NULL);
 
-	spin_lock_bh(&nss_gre_stats_lock);
-	for (i = 0; i < NSS_GRE_MAX_DEBUG_SESSION_STATS; i++) {
-		if (!session_debug_stats[i].valid) {
-			session_debug_stats[i].valid = true;
-			session_debug_stats[i].if_num = if_num;
-			session_debug_stats[i].if_index = netdev->ifindex;
-			break;
-		}
-	}
-	spin_unlock_bh(&nss_gre_stats_lock);
+	nss_gre_stats_session_register(if_num, netdev);
 
 	return nss_ctx;
 }
@@ -443,39 +333,53 @@ EXPORT_SYMBOL(nss_gre_register_if);
 void nss_gre_unregister_if(uint32_t if_num)
 {
 	struct nss_ctx_instance *nss_ctx = (struct nss_ctx_instance *)&nss_top_main.nss[nss_top_main.gre_handler_id];
-	int i;
+	struct net_device *dev;
 
 	nss_assert(nss_ctx);
 	nss_assert(nss_is_dynamic_interface(if_num));
 
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
-	nss_ctx->subsys_dp_register[if_num].cb = NULL;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = 0;
+	dev = nss_cmn_get_interface_dev(nss_ctx, if_num);
+	if (!dev) {
+		nss_warning("%p: Unable to find net device for the interface %d\n", nss_ctx, if_num);
+		return;
+	}
 
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
+	nss_core_set_subsys_dp_type(nss_ctx, dev, if_num, NSS_DYNAMIC_INTERFACE_TYPE_NONE);
 	nss_top_main.gre_msg_callback = NULL;
 
-	nss_core_unregister_handler(if_num);
+	nss_core_unregister_handler(nss_ctx, if_num);
 
-	spin_lock_bh(&nss_gre_stats_lock);
-	for (i = 0; i < NSS_GRE_MAX_DEBUG_SESSION_STATS; i++) {
-		if (session_debug_stats[i].if_num == if_num) {
-			memset(&session_debug_stats[i], 0, sizeof(struct nss_stats_gre_session_debug));
-			break;
-		}
-	}
-	spin_unlock_bh(&nss_gre_stats_lock);
+	nss_gre_stats_session_unregister(if_num);
 }
 EXPORT_SYMBOL(nss_gre_unregister_if);
 
 /*
  * nss_get_gre_context()
  */
-struct nss_ctx_instance *nss_gre_get_context()
+struct nss_ctx_instance *nss_gre_get_context(void)
 {
 	return (struct nss_ctx_instance *)&nss_top_main.nss[nss_top_main.gre_handler_id];
 }
 EXPORT_SYMBOL(nss_gre_get_context);
+
+/*
+ * nss_gre_ifnum_with_core_id()
+ *	Append core id to GRE interface num.
+ */
+int nss_gre_ifnum_with_core_id(int if_num)
+{
+	struct nss_ctx_instance *nss_ctx = nss_gre_get_context();
+
+	NSS_VERIFY_CTX_MAGIC(nss_ctx);
+	if (!nss_is_dynamic_interface(if_num)) {
+		nss_warning("%p: Invalid if_num: %d, must be a dynamic interface\n", nss_ctx, if_num);
+		return 0;
+	}
+
+	return NSS_INTERFACE_NUM_APPEND_COREID(nss_ctx, if_num);
+}
+EXPORT_SYMBOL(nss_gre_ifnum_with_core_id);
 
 /*
  * nss_gre_msg_init()
@@ -493,8 +397,11 @@ EXPORT_SYMBOL(nss_gre_msg_init);
  */
 void nss_gre_register_handler(void)
 {
+	struct nss_ctx_instance *nss_ctx = nss_gre_get_context();
+
 	nss_info("nss_gre_register_handler");
 	sema_init(&nss_gre_pvt.sem, 1);
 	init_completion(&nss_gre_pvt.complete);
-	nss_core_register_handler(NSS_GRE_INTERFACE, nss_gre_msg_handler, NULL);
+	nss_core_register_handler(nss_ctx, NSS_GRE_INTERFACE, nss_gre_msg_handler, NULL);
+	nss_gre_stats_dentry_create();
 }

@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -15,6 +15,7 @@
  */
 
 #include "nss_tx_rx_common.h"
+#include "nss_vlan_log.h"
 
 #define NSS_VLAN_TX_TIMEOUT 1000 /* 1 Second */
 
@@ -30,6 +31,15 @@ static struct nss_vlan_pvt {
 } vlan_pvt;
 
 /*
+ * nss_vlan_get_context()
+ */
+struct nss_ctx_instance *nss_vlan_get_context(void)
+{
+	return (struct nss_ctx_instance *)&nss_top_main.nss[nss_top_main.vlan_handler_id];
+}
+EXPORT_SYMBOL(nss_vlan_get_context);
+
+/*
  * nss_vlan_verify_if_num()
  *	Verify if_num passed to us.
  */
@@ -39,7 +49,7 @@ static bool nss_vlan_verify_if_num(uint32_t if_num)
 		return false;
 	}
 
-	if (nss_dynamic_interface_get_type(if_num) != NSS_DYNAMIC_INTERFACE_TYPE_VLAN) {
+	if (nss_dynamic_interface_get_type(nss_vlan_get_context(), if_num) != NSS_DYNAMIC_INTERFACE_TYPE_VLAN) {
 		return false;
 	}
 
@@ -58,6 +68,11 @@ static void nss_vlan_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_ms
 	nss_assert(nss_vlan_verify_if_num(ncm->interface));
 
 	/*
+	 * Trace messages.
+	 */
+	nss_vlan_log_rx_msg(nvm);
+
+	/*
 	 * Is this a valid request/response packet?
 	 */
 	if (ncm->type >= NSS_VLAN_MSG_TYPE_MAX) {
@@ -74,7 +89,7 @@ static void nss_vlan_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_ms
 	 * Update the callback and app_data for NOTIFY messages, vlan sends all notify messages
 	 * to the same callback/app_data.
 	 */
-	if (ncm->response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (ncm->response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = (nss_ptr_t)nss_ctx->nss_top->vlan_callback;
 		ncm->app_data = (nss_ptr_t)app_data;
 	}
@@ -128,16 +143,12 @@ static void nss_vlan_callback(void *app_data, struct nss_vlan_msg *nvm)
  */
 nss_tx_status_t nss_vlan_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_vlan_msg *msg)
 {
-	struct nss_vlan_msg *nm;
 	struct nss_cmn_msg *ncm = &msg->cm;
-	struct sk_buff *nbuf;
-	int32_t status;
 
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: vlan msg dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
+	/*
+	 * Trace messages.
+	 */
+	nss_vlan_log_tx_msg(msg);
 
 	/*
 	 * Sanity check the message
@@ -152,35 +163,7 @@ nss_tx_status_t nss_vlan_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_vla
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_vlan_msg)) {
-		nss_warning("%p: message length is invalid: %d", nss_ctx, nss_cmn_get_msg_len(ncm));
-		return NSS_TX_FAILURE;
-	}
-
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: msg dropped as command allocation failed", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	/*
-	 * Copy the message to our skb
-	 */
-	nm = (struct nss_vlan_msg *)skb_put(nbuf, sizeof(struct nss_vlan_msg));
-	memcpy(nm, msg, sizeof(struct nss_vlan_msg));
-
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: Unable to enqueue 'vlan message'", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_CMD_REQ]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, msg, sizeof(*msg), NSS_NBUF_PAYLOAD_SIZE);
 }
 EXPORT_SYMBOL(nss_vlan_tx_msg);
 
@@ -218,15 +201,6 @@ nss_tx_status_t nss_vlan_tx_msg_sync(struct nss_ctx_instance *nss_ctx, struct ns
 	return status;
 }
 EXPORT_SYMBOL(nss_vlan_tx_msg_sync);
-
-/*
- * nss_vlan_get_context()
- */
-struct nss_ctx_instance *nss_vlan_get_context(void)
-{
-	return (struct nss_ctx_instance *)&nss_top_main.nss[nss_top_main.vlan_handler_id];
-}
-EXPORT_SYMBOL(nss_vlan_get_context);
 
 /*
  * nss_vlan_msg_init()
@@ -397,12 +371,9 @@ struct nss_ctx_instance *nss_register_vlan_if(uint32_t if_num, nss_vlan_callback
 
 	nss_assert(nss_vlan_verify_if_num(if_num));
 
-	nss_ctx->subsys_dp_register[if_num].ndev = netdev;
-	nss_ctx->subsys_dp_register[if_num].cb = vlan_data_callback;
-	nss_ctx->subsys_dp_register[if_num].app_data = app_ctx;
-	nss_ctx->subsys_dp_register[if_num].features = features;
+	nss_core_register_subsys_dp(nss_ctx, if_num, vlan_data_callback, NULL, app_ctx, netdev, features);
 
-	nss_core_register_handler(if_num, nss_vlan_handler, app_ctx);
+	nss_core_register_handler(nss_ctx, if_num, nss_vlan_handler, app_ctx);
 
 	return nss_ctx;
 }
@@ -417,12 +388,9 @@ void nss_unregister_vlan_if(uint32_t if_num)
 
 	nss_assert(nss_vlan_verify_if_num(if_num));
 
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
-	nss_ctx->subsys_dp_register[if_num].cb = NULL;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = 0;
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
 
-	nss_core_unregister_handler(if_num);
+	nss_core_unregister_handler(nss_ctx, if_num);
 }
 EXPORT_SYMBOL(nss_unregister_vlan_if);
 
@@ -432,8 +400,10 @@ EXPORT_SYMBOL(nss_unregister_vlan_if);
  */
 void nss_vlan_register_handler(void)
 {
+	struct nss_ctx_instance *nss_ctx = nss_vlan_get_context();
+
 	nss_info("nss_vlan_register_handler\n");
-	nss_core_register_handler(NSS_VLAN_INTERFACE, nss_vlan_handler, NULL);
+	nss_core_register_handler(nss_ctx, NSS_VLAN_INTERFACE, nss_vlan_handler, NULL);
 
 	sema_init(&vlan_pvt.sem, 1);
 	init_completion(&vlan_pvt.complete);

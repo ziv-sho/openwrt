@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -20,6 +20,7 @@
  */
 
 #include "nss_tx_rx_common.h"
+#include "nss_wifi_if_stats.h"
 #include <net/arp.h>
 
 #define NSS_WIFI_IF_TX_TIMEOUT			3000 /* 3 Seconds */
@@ -30,30 +31,12 @@ extern int nss_ctl_redirect;
 /*
  * Data structure that holds the wifi interface context.
  */
-static struct nss_wifi_if_handle *wifi_handle[NSS_MAX_DYNAMIC_INTERFACES];
+struct nss_wifi_if_handle *wifi_handle[NSS_MAX_DYNAMIC_INTERFACES];
 
 /*
  * Spinlock to protect the global data structure wifi_handle.
  */
 DEFINE_SPINLOCK(wifi_if_lock);
-
-/*
- * nss_wifi_if_stats_sync()
- *	Sync stats from the NSS FW
- */
-static void nss_wifi_if_stats_sync(struct nss_wifi_if_handle *handle,
-					struct nss_wifi_if_stats *nwis)
-{
-	struct nss_wifi_if_stats *stats = &handle->stats;
-
-	stats->node_stats.rx_packets += nwis->node_stats.rx_packets;
-	stats->node_stats.rx_bytes += nwis->node_stats.rx_bytes;
-	stats->node_stats.rx_dropped += nwis->node_stats.rx_dropped;
-	stats->node_stats.tx_packets += nwis->node_stats.tx_packets;
-	stats->node_stats.tx_bytes += nwis->node_stats.tx_bytes;
-	stats->tx_enqueue_failed += nwis->tx_enqueue_failed;
-	stats->shaper_enqueue_failed += nwis->shaper_enqueue_failed;
-}
 
 /*
  * nss_wifi_if_msg_handler()
@@ -114,7 +97,7 @@ static void nss_wifi_if_msg_handler(struct nss_ctx_instance *nss_ctx,
 	/*
 	 * Update the callback and app_data for NOTIFY messages.
 	 */
-	if (nwim->cm.response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (nwim->cm.response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = (nss_ptr_t)handle->cb;
 		ncm->app_data = (nss_ptr_t)handle->app_data;
 	}
@@ -140,11 +123,12 @@ static void nss_wifi_if_msg_handler(struct nss_ctx_instance *nss_ctx,
  */
 static uint32_t nss_wifi_if_register_handler(struct nss_wifi_if_handle *handle)
 {
+	struct nss_ctx_instance *nss_ctx = &nss_top_main.nss[nss_top_main.wlan_handler_id];
 	uint32_t ret;
 	struct nss_wifi_if_pvt *nwip = NULL;
 	int32_t if_num = handle->if_num;
 
-	ret = nss_core_register_handler(if_num, nss_wifi_if_msg_handler, NULL);
+	ret = nss_core_register_handler(nss_ctx, if_num, nss_wifi_if_msg_handler, NULL);
 
 	if (ret != NSS_CORE_STATUS_SUCCESS) {
 		nss_warning("%d: Message handler failed to be registered for interface ret %d\n", if_num, ret);
@@ -158,6 +142,7 @@ static uint32_t nss_wifi_if_register_handler(struct nss_wifi_if_handle *handle)
 		nwip->sem_init_done = 1;
 	}
 
+	nss_wifi_if_stats_dentry_create();
 	return NSS_WIFI_IF_SUCCESS;
 }
 
@@ -188,51 +173,14 @@ static void nss_wifi_if_callback(void *app_data, struct nss_cmn_msg *ncm)
  */
 nss_tx_status_t nss_wifi_if_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_wifi_if_msg *nwim)
 {
-	int32_t status;
-	struct sk_buff *nbuf;
 	struct nss_cmn_msg *ncm = &nwim->cm;
-	struct nss_wifi_if_msg *nwim2;
-
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: Interface could not be created as core not ready\n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
 
 	if (ncm->type > NSS_WIFI_IF_MAX_MSG_TYPES) {
 		nss_warning("%p: message type out of range: %d\n", nss_ctx, ncm->type);
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_wifi_if_msg)) {
-		nss_warning("%p: invalid length: %d. Length of wifi msg is %d\n",
-				nss_ctx, nss_cmn_get_msg_len(ncm), (int)sizeof(struct nss_wifi_if_msg));
-		return NSS_TX_FAILURE;
-	}
-
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: wifi interface %d: command allocation failed\n", nss_ctx, ncm->interface);
-		return NSS_TX_FAILURE;
-	}
-
-	nwim2 = (struct nss_wifi_if_msg *)skb_put(nbuf, sizeof(struct nss_wifi_if_msg));
-	memcpy(nwim2, nwim, sizeof(struct nss_wifi_if_msg));
-
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: Unable to enqueue 'virtual interface' command\n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	/*
-	 * The context returned is the virtual interface # which is, essentially, the index into the if_ctx
-	 * array that is holding the net_device pointer
-	 */
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, nwim, sizeof(*nwim), NSS_NBUF_PAYLOAD_SIZE);
 }
 
 /*
@@ -375,10 +323,10 @@ static void nss_wifi_if_msg_init(struct nss_wifi_if_msg *nwim,
 }
 
 /*
- * nss_wifi_if_create()
+ * nss_wifi_if_create_sync()
  *	Create a wifi interface and associate it with the netdev
  */
-struct nss_wifi_if_handle *nss_wifi_if_create(struct net_device *netdev)
+struct nss_wifi_if_handle *nss_wifi_if_create_sync(struct net_device *netdev)
 {
 	struct nss_ctx_instance *nss_ctx = &nss_top_main.nss[nss_top_main.wlan_handler_id];
 	struct nss_wifi_if_msg nwim;
@@ -417,11 +365,7 @@ struct nss_wifi_if_handle *nss_wifi_if_create(struct net_device *netdev)
 		goto error;
 	}
 
-	spin_lock_bh(&nss_top_main.lock);
-	if (!nss_ctx->subsys_dp_register[handle->if_num].ndev) {
-		nss_ctx->subsys_dp_register[handle->if_num].ndev = netdev;
-	}
-	spin_unlock_bh(&nss_top_main.lock);
+	nss_core_register_subsys_dp(nss_ctx, handle->if_num, NULL, NULL, NULL, netdev, 0);
 
 	/*
 	 * Hold a reference to the net_device
@@ -439,13 +383,13 @@ error:
 	nss_wifi_if_handle_destroy(handle);
 	return NULL;
 }
-EXPORT_SYMBOL(nss_wifi_if_create);
+EXPORT_SYMBOL(nss_wifi_if_create_sync);
 
 /*
- * nss_wifi_if_destroy()
+ * nss_wifi_if_destroy_sync()
  *	Destroy the wifi interface associated with the interface number.
  */
-nss_tx_status_t nss_wifi_if_destroy(struct nss_wifi_if_handle *handle)
+nss_tx_status_t nss_wifi_if_destroy_sync(struct nss_wifi_if_handle *handle)
 {
 	nss_tx_status_t status;
 	struct net_device *dev;
@@ -465,14 +409,14 @@ nss_tx_status_t nss_wifi_if_destroy(struct nss_wifi_if_handle *handle)
 	}
 
 	dev = nss_ctx->subsys_dp_register[if_num].ndev;
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
 	spin_unlock_bh(&nss_top_main.lock);
 	dev_put(dev);
 
 	status = nss_wifi_if_handle_destroy(handle);
 	return status;
 }
-EXPORT_SYMBOL(nss_wifi_if_destroy);
+EXPORT_SYMBOL(nss_wifi_if_destroy_sync);
 
 /*
  * nss_wifi_if_register()
@@ -495,10 +439,7 @@ void nss_wifi_if_register(struct nss_wifi_if_handle *handle,
 	if_num = handle->if_num;
 	nss_assert(NSS_IS_IF_TYPE(DYNAMIC, if_num));
 
-	nss_ctx->subsys_dp_register[if_num].ndev = netdev;
-	nss_ctx->subsys_dp_register[if_num].cb = rx_callback;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = netdev->features;
+	nss_core_register_subsys_dp(nss_ctx, if_num, rx_callback, NULL, NULL, netdev, netdev->features);
 }
 EXPORT_SYMBOL(nss_wifi_if_register);
 
@@ -519,10 +460,7 @@ void nss_wifi_if_unregister(struct nss_wifi_if_handle *handle)
 	nss_ctx = handle->nss_ctx;
 	if_num = handle->if_num;
 
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
-	nss_ctx->subsys_dp_register[if_num].cb = NULL;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = 0;
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
 }
 EXPORT_SYMBOL(nss_wifi_if_unregister);
 
@@ -533,9 +471,9 @@ EXPORT_SYMBOL(nss_wifi_if_unregister);
 nss_tx_status_t nss_wifi_if_tx_buf(struct nss_wifi_if_handle *handle,
 						struct sk_buff *skb)
 {
-	int32_t status;
 	struct nss_ctx_instance *nss_ctx;
 	int32_t if_num;
+	int cpu = 0;
 
 	if (!handle) {
 		nss_warning("nss_wifi_if_tx_buf handle is NULL\n");
@@ -559,15 +497,6 @@ nss_tx_status_t nss_wifi_if_tx_buf(struct nss_wifi_if_handle *handle,
 	nss_assert(NSS_IS_IF_TYPE(DYNAMIC, if_num));
 
 	/*
-	 * Get the NSS context that will handle this packet and check that it is initialised and ready
-	 */
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: wifi_if packet dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
-
-	/*
 	 * Sanity check the SKB to ensure that it's suitable for us
 	 */
 	if (unlikely(skb->len <= ETH_HLEN)) {
@@ -576,90 +505,13 @@ nss_tx_status_t nss_wifi_if_tx_buf(struct nss_wifi_if_handle *handle,
 	}
 
 	/*
-	 * Direct the buffer to the NSS
+	 * set skb queue mapping
 	 */
-	status = nss_core_send_buffer(nss_ctx,
-					if_num, skb,
-					NSS_IF_DATA_QUEUE_0,
-					H2N_BUFFER_PACKET,
-					H2N_BIT_FLAG_VIRTUAL_BUFFER);
-	if (unlikely(status != NSS_CORE_STATUS_SUCCESS)) {
-		nss_warning("%p: Rx packet unable to enqueue\n", nss_ctx);
+	cpu = get_cpu();
+	put_cpu();
+	skb_set_queue_mapping(skb, cpu);
 
-		return NSS_TX_FAILURE_QUEUE;
-	}
-
-	/*
-	 * Kick the NSS awake so it can process our new entry.
-	 */
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_PACKET]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_packet(nss_ctx, skb, if_num, H2N_BIT_FLAG_VIRTUAL_BUFFER);
 }
 EXPORT_SYMBOL(nss_wifi_if_tx_buf);
 
-/*
- * nss_wifi_if_copy_stats()
- *	Copy the stats from wifi handle to buffer(line) for if_num.
- */
-int32_t nss_wifi_if_copy_stats(int32_t if_num, int i, char *line)
-{
-	int32_t bytes = 0;
-	struct nss_wifi_if_stats *stats;
-	int32_t ifnum;
-	uint32_t len = 80;
-	struct nss_wifi_if_handle *handle = NULL;
-
-	ifnum = NSS_WIFI_IF_GET_INDEX(if_num);
-
-	spin_lock_bh(&wifi_if_lock);
-	if (!wifi_handle[ifnum]) {
-		spin_unlock_bh(&wifi_if_lock);
-		goto end;
-	}
-
-	handle = wifi_handle[ifnum];
-	spin_unlock_bh(&wifi_if_lock);
-
-	stats = &handle->stats;
-
-	switch (i) {
-	case 0:
-		bytes = scnprintf(line, len, "rx_packets=%d\n",
-					stats->node_stats.rx_packets);
-		break;
-
-	case 1:
-		bytes = scnprintf(line, len, "rx_bytes=%d\n",
-					stats->node_stats.rx_bytes);
-		break;
-
-	case 2:
-		bytes = scnprintf(line, len, "rx_dropped=%d\n",
-					stats->node_stats.rx_dropped);
-		break;
-
-	case 3:
-		bytes = scnprintf(line, len, "tx_packets=%d\n",
-					stats->node_stats.tx_packets);
-		break;
-
-	case 4:
-		bytes = scnprintf(line, len, "tx_bytes=%d\n",
-					stats->node_stats.tx_bytes);
-		break;
-
-	case 5:
-		bytes = scnprintf(line, len, "tx_enqueue_failed=%d\n",
-					stats->tx_enqueue_failed);
-		break;
-
-	case 6:
-		bytes = scnprintf(line, len, "shaper_enqueue_failed=%d\n",
-					stats->shaper_enqueue_failed);
-		break;
-	}
-
-end:
-	return bytes;
-}

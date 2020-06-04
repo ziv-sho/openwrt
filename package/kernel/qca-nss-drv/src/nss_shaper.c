@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014, 2016-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014, 2016-2020 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -290,13 +290,14 @@ nss_tx_status_t nss_shaper_bounce_interface_packet(void *ctx, uint32_t if_num, s
 	}
 	spin_unlock_bh(&nss_top->lock);
 
-	status = nss_core_send_buffer(nss_ctx, if_num, skb, NSS_IF_DATA_QUEUE_0, H2N_BUFFER_SHAPER_BOUNCE_INTERFACE, 0);
+	status = nss_core_send_buffer(nss_ctx, if_num, skb, NSS_IF_H2N_DATA_QUEUE,
+					H2N_BUFFER_SHAPER_BOUNCE_INTERFACE, 0);
 	if (status != NSS_CORE_STATUS_SUCCESS) {
 		return NSS_TX_FAILURE;
 	}
 	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
 
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_PACKET]);
+	NSS_PKT_STATS_INC(&nss_ctx->nss_top->stats_drv[NSS_DRV_STATS_TX_PACKET]);
 	return NSS_TX_SUCCESS;
 }
 
@@ -334,15 +335,26 @@ nss_tx_status_t nss_shaper_bounce_bridge_packet(void *ctx, uint32_t if_num, stru
 	spin_unlock_bh(&nss_top->lock);
 
 	nss_info("%s: Bridge bounce skb: %p, if_num: %u, ctx: %p", __func__, skb, if_num, nss_ctx);
-	status = nss_core_send_buffer(nss_ctx, if_num, skb, NSS_IF_DATA_QUEUE_0, H2N_BUFFER_SHAPER_BOUNCE_BRIDGE, 0);
+	status = nss_core_send_buffer(nss_ctx, if_num, skb, NSS_IF_H2N_DATA_QUEUE,
+					H2N_BUFFER_SHAPER_BOUNCE_BRIDGE, 0);
 	if (status != NSS_CORE_STATUS_SUCCESS) {
 		nss_info("%s: Bridge bounce core send rejected", __func__);
 		return NSS_TX_FAILURE;
 	}
 	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
 
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_PACKET]);
+	NSS_PKT_STATS_INC(&nss_ctx->nss_top->stats_drv[NSS_DRV_STATS_TX_PACKET]);
 	return NSS_TX_SUCCESS;
+}
+
+/*
+ * nss_shaper_get_device()
+ *	Gets the original device from probe.
+ */
+struct device *nss_shaper_get_dev(void)
+{
+	struct nss_ctx_instance *nss_ctx = &nss_top_main.nss[nss_top_main.shaping_handler_id];
+	return nss_ctx->dev;
 }
 
 EXPORT_SYMBOL(nss_shaper_bounce_bridge_packet);
@@ -353,3 +365,4 @@ EXPORT_SYMBOL(nss_shaper_unregister_shaper_bounce_bridge);
 EXPORT_SYMBOL(nss_shaper_register_shaper_bounce_bridge);
 EXPORT_SYMBOL(nss_shaper_register_shaping);
 EXPORT_SYMBOL(nss_shaper_unregister_shaping);
+EXPORT_SYMBOL(nss_shaper_get_dev);

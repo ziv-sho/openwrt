@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -22,11 +22,34 @@
 #ifndef __NSS_HLOS_IF_H
 #define __NSS_HLOS_IF_H
 
-#define NSS_MIN_NUM_CONN 			256		/**< MIN  Connection shared between IPv4 and IPv6 */
-#define NSS_DEFAULT_NUM_CONN			4096		/**< Default number of connections for each IPV4 and IPV6 */
-#define NSS_NUM_CONN_QUANTA_MASK		(1024 - 1)	/**< Quanta of number of connections  1024 */
-#define NSS_MAX_TOTAL_NUM_CONN_IPV4_IPV6	8196		/**< MAX Connection shared between IPv4 and IPv6 */
-#define NSS_CONN_CFG_TIMEOUT			6000		/**< 6 sec timeout for connection cfg message */
+#define NSS_MIN_NUM_CONN			256		/* MIN Connection shared between IPv4 and IPv6 */
+#define NSS_FW_DEFAULT_NUM_CONN			1024		/* Firmware default number of connections for IPv4 and IPv6 */
+#define NSS_NUM_CONN_QUANTA_MASK		(1024 - 1)	/* Quanta of number of connections 1024 */
+#define NSS_CONN_CFG_TIMEOUT			6000		/* 6 sec timeout for connection cfg message */
+
+/*
+ * The following definitions sets the maximum number of connections
+ * based on the type of memory profile that the system is operating with
+ */
+#if defined (NSS_MEM_PROFILE_LOW)
+#define NSS_DEFAULT_NUM_CONN			512		/* Default number of connections for IPv4 and IPv6 each, for low memory profile */
+#define NSS_MAX_TOTAL_NUM_CONN_IPV4_IPV6	1024		/* MAX Connection shared between IPv4 and IPv6 for low memory profile */
+#define NSS_LOW_MEM_EMPTY_POOL_BUF_SZ		4096		/* Default empty buffer pool size for low profile */
+#elif defined (NSS_MEM_PROFILE_MEDIUM)
+#define NSS_DEFAULT_NUM_CONN			2048		/* Default number of connections for IPv4 and IPv6 each, for medium memory profile */
+#define NSS_MAX_TOTAL_NUM_CONN_IPV4_IPV6	4096		/* MAX Connection shared between IPv4 and IPv6 for medium memory profile */
+#else
+#define NSS_DEFAULT_NUM_CONN			4096		/* Default number of connections for each IPv4 and IPv6 */
+#define NSS_MAX_TOTAL_NUM_CONN_IPV4_IPV6	8192		/* MAX Connection shared between IPv4 and IPv6 */
+#endif
+
+#if defined(NSS_SKB_FIXED_SIZE_2K) && !defined(__LP64__)
+#define NSS_EMPTY_BUFFER_SIZE			1792		/* Default buffer size for reduced memory profiles. */
+#define NSS_FIXED_BUFFER_SIZE					/* For low memory profiles, maximum buffer size/MTU is fixed */
+#else
+#define NSS_EMPTY_BUFFER_SIZE			1984		/* Default buffer size for regular memory profiles. */
+#undef NSS_FIXED_BUFFER_SIZE
+#endif
 
 enum {
 	NSS_SUCCESS = 0,
@@ -45,83 +68,6 @@ enum nss_if_metadata_types {
 	NSS_TX_METADATA_TYPE_INTERFACE_MSS_SET,
 	NSS_RX_METADATA_TYPE_INTERFACE_STATS_SYNC,
 	NSS_METADATA_TYPE_INTERFACE_MAX,
-};
-
-/*
- * ETH_RX
-*/
-
-/*
- * Request/Response types
- */
-enum nss_eth_rx_metadata_types {
-	NSS_RX_METADATA_TYPE_ETH_RX_STATS_SYNC,
-	NSS_METADATA_TYPE_ETH_RX_MAX,
-};
-
-/*
- * Exception events from bridge/route handler
- */
-enum exception_events_eth_rx {
-	NSS_EXCEPTION_EVENT_ETH_RX_UNKNOWN_L3_PROTOCOL,
-	NSS_EXCEPTION_EVENT_ETH_RX_ETH_HDR_MISSING,
-	NSS_EXCEPTION_EVENT_ETH_RX_VLAN_MISSING,
-	NSS_EXCEPTION_EVENT_ETH_RX_TRUSTSEC_HDR_MISSING,
-	NSS_EXCEPTION_EVENT_ETH_RX_MAX,
-};
-
-/*
- * The NSS eth_rx node stats structure.
- */
-struct nss_eth_rx_node_sync {
-	struct nss_cmn_node_stats node_stats;
-				/* Common node stats for ETH_RX */
-	uint32_t total_ticks;		/* Total clock ticks spend inside the eth_rx */
-	uint32_t worst_case_ticks;	/* Worst case iteration of the eth_rx in ticks */
-	uint32_t iterations;		/* Number of iterations around the eth_rx */
-	uint32_t exception_events[NSS_EXCEPTION_EVENT_ETH_RX_MAX];
-				/* Number of ETH_RX exception events */
-};
-
-/*
- * Message structure to send/receive eth_rx commands
- */
-struct nss_eth_rx_msg {
-	struct nss_cmn_msg cm;		/* Message Header */
-	union {
-		struct nss_eth_rx_node_sync node_sync;	/* Message: node statistics sync */
-	} msg;
-};
-
-/*
- * C2C message structures
- */
-
-/*
- * Request/Response types
- */
-enum nss_c2c_metadata_types {
-	NSS_TX_METADATA_TYPE_NONE = 0,
-	NSS_TX_METADATA_TYPE_C2C_TX_MAP = 1,
-	NSS_METADATA_TYPE_C2C_MAX,
-};
-
-/*
- * NSS Tx Map
- */
-struct nss_c2c_tx_map {
-	uint32_t c2c_start;		/* Peer core C2C Rx queue start address */
-	uint32_t c2c_int_addr;		/* Peer core C2C interrupt register address */
-};
-
-/*
- * Message structure to send/receive phys i/f commands
- */
-struct nss_c2c_msg {
-	struct nss_cmn_msg cm;		/* Message Header */
-	union {
-		struct nss_c2c_tx_map tx_map;
-	} msg;
 };
 
 /*
@@ -213,10 +159,11 @@ struct nss_generic_msg {
  * NSS frequency scaling messages
  */
 enum nss_freq_stats_metadata_types {
-	COREFREQ_METADATA_TYPE_ERROR = 0,
-	COREFREQ_METADATA_TYPE_RX_FREQ_CHANGE = 1,
-	COREFREQ_METADATA_TYPE_TX_FREQ_ACK = 2,
-	COREFREQ_METADATA_TYPE_TX_CORE_STATS = 3,
+	COREFREQ_METADATA_TYPE_ERROR,
+	COREFREQ_METADATA_TYPE_RX_FREQ_CHANGE,
+	COREFREQ_METADATA_TYPE_TX_FREQ_ACK,
+	COREFREQ_METADATA_TYPE_TX_CORE_STATS,
+	COREFREQ_METADATA_TYPE_MAX,
 };
 
  /*
@@ -261,53 +208,16 @@ struct nss_corefreq_msg {
 };
 
 /*
- * lso_rx_node statistics.
- */
-struct nss_lso_rx_stats_sync {
-	struct nss_cmn_node_stats node_stats;
-
-	uint32_t tx_dropped;				/* Number of packets dropped because lso_rx transmit queue is full */
-	uint32_t dropped;				/* Total of packets dropped by the node internally */
-	uint32_t pbuf_alloc_fail;			/* Count number of pbuf alloc fails */
-	uint32_t pbuf_reference_fail;			/* Count number of pbuf ref fails */
-
-	/*
-	 * If we're generating per-packet statistics then we count total lso_rx processing ticks
-	 * worst-case ticks and the number of iterations around the lso_rx handler that we take.
-	 */
-	uint32_t total_ticks;			/* Total clock ticks spend inside the lso_rx handler */
-	uint32_t worst_case_ticks;
-						/* Worst case iteration of the lso_rx handler in ticks */
-	uint32_t iterations;			/* Number of iterations around the lso_rx handler */
-};
-
-/*
- * Message types for lso_rx
- */
-enum nss_lso_rx_metadata_types {
-	NSS_LSO_RX_STATS_SYNC_MSG,			/* Message type - stats sync message */
-};
-
-/*
- * Message structure to send receive LSO_RX commands
- */
-struct nss_lso_rx_msg {
-	struct nss_cmn_msg cm;					/* Message header */
-	union {
-		struct nss_lso_rx_stats_sync stats_sync;	/* Stats sub-message */
-	} msg;
-};
-
-/*
  * H2N Buffer Types
  */
 #define H2N_BUFFER_EMPTY			0
+#define H2N_PAGED_BUFFER_EMPTY			1
 #define H2N_BUFFER_PACKET			2
 #define H2N_BUFFER_CTRL				4
-#define H2N_BUFFER_CRYPTO_REQ			7
-#define H2N_BUFFER_NATIVE_WIFI	    8
+#define H2N_BUFFER_NATIVE_WIFI			8
 #define H2N_BUFFER_SHAPER_BOUNCE_INTERFACE	9
-#define H2N_BUFFER_SHAPER_BOUNCE_BRIDGE	10
+#define H2N_BUFFER_SHAPER_BOUNCE_BRIDGE		10
+#define H2N_BUFFER_RATE_TEST			14
 #define H2N_BUFFER_MAX				16
 
 /*
@@ -319,12 +229,12 @@ struct nss_lso_rx_msg {
 #define H2N_BIT_FLAG_LAST_SEGMENT			0x0008
 
 #define H2N_BIT_FLAG_GEN_IP_TRANSPORT_CHECKSUM_NONE	0x0010
-#define H2N_BIT_FLAG_TX_TS_REQUIRED 			0x0040
+#define H2N_BIT_FLAG_TX_TS_REQUIRED			0x0040
 #define H2N_BIT_FLAG_DISCARD				0x0080
 #define H2N_BIT_FLAG_SEGMENTATION_ENABLE		0x0100
 
 #define H2N_BIT_FLAG_VIRTUAL_BUFFER			0x2000
-#define H2N_BIT_FLAG_BUFFER_REUSE			0x8000
+#define H2N_BIT_FLAG_BUFFER_REUSABLE			0x8000
 
 /*
  * HLOS to NSS descriptor structure.
@@ -357,7 +267,8 @@ struct h2n_descriptor {
 #define N2H_BUFFER_PACKET_VIRTUAL		10
 #define N2H_BUFFER_SHAPER_BOUNCED_INTERFACE	11
 #define N2H_BUFFER_SHAPER_BOUNCED_BRIDGE	12
-#define N2H_BUFFER_PACKET_EXT	 		13
+#define N2H_BUFFER_PACKET_EXT			13
+#define N2H_BUFFER_RATE_TEST			14
 #define N2H_BUFFER_MAX				16
 
 /*
@@ -377,7 +288,7 @@ struct h2n_descriptor {
 #define N2H_BIT_FLAG_IP_TRANSPORT_CHECKSUM_VALID	0x0002
 #define N2H_BIT_FLAG_FIRST_SEGMENT			0x0004
 #define N2H_BIT_FLAG_LAST_SEGMENT			0x0008
-#define N2H_BIT_FLAG_VIRTUAL_BUFFER			0x2000
+#define N2H_BIT_FLAG_INGRESS_SHAPED			0x0010
 
 /*
  * NSS to HLOS descriptor structure
@@ -391,7 +302,9 @@ struct n2h_descriptor {
 	uint16_t bit_flags;	/* Bit flags associated with the buffer */
 	uint8_t buffer_type;	/* Type of buffer */
 	uint8_t response_type;	/* Response type if the buffer is a command response */
-	uint16_t reserved[3];	/* Reserved for future use */
+	uint8_t pri;		/* Packet priority */
+	uint8_t service_code;	/* Service code */
+	uint32_t reserved;	/* Reserved for future use */
 	nss_ptr_t opaque;	/* 32 or 64-bit value provided by the HLOS to associate with the buffer. The cookie has no meaning to the NSS */
 #ifndef __LP64__
 	uint32_t padding;	/* Pad to fit 64 bits, do not reuse */
@@ -459,6 +372,6 @@ struct nss_if_mem_map {
 			/* Index number for the next descriptor that will be written by the HLOS in the H2N0 descriptor ring (HLOS owned) */
 	volatile uint32_t n2h_hlos_index[15];
 			/* Index number for the next descriptor that will be read by the HLOS in the N2H0 descriptor ring (HLOS owned) */
-	uint32_t c2c_start;	/* Reserved for future use */
+	uint32_t reserved;	/* Reserved for future use */
 };
 #endif /* __NSS_HLOS_IF_H */

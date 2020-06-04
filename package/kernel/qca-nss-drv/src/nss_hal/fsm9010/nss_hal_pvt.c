@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -39,6 +39,18 @@ static uint32_t intr_cause[] = {(1 << NSS_H2N_INTR_EMPTY_BUFFER_QUEUE_BIT),
 				(1 << NSS_H2N_INTR_DATA_COMMAND_QUEUE_BIT),
 				(1 << NSS_H2N_INTR_TX_UNBLOCKED_BIT),
 				(1 << NSS_H2N_INTR_TRIGGER_COREDUMP_BIT)};
+
+/*
+ * nss_hal_wq_function()
+ *	Added to Handle BH requests to kernel
+ */
+void nss_hal_wq_function(struct work_struct *work)
+{
+	/*
+	 * Not supported in FSM9010
+	 */
+	kfree((void *)work);
+}
 
 /*
  * nss_hal_get_num_irqs()
@@ -95,7 +107,7 @@ static struct nss_platform_data *__nss_hal_of_get_pdata(struct platform_device *
 	}
 
 	if (of_property_read_u32(np, "qcom,id", &npd->id)
-	    || of_property_read_u32(np, "qcom,num_queue", &npd->num_queue)) {
+	    || of_property_read_u32(np, "qcom,num-queue", &npd->num_queue)) {
 		pr_err("%s: error reading critical device node properties\n", np->name);
 		goto out;
 	}
@@ -106,6 +118,11 @@ static struct nss_platform_data *__nss_hal_of_get_pdata(struct platform_device *
 
 	if (npd->num_irq < npd->num_queue) {
 		pr_err("%s: not enough interrupts configured for all the queues\n", np->name);
+		goto out;
+	}
+
+	if (npd->num_irq > NSS_MAX_IRQ_PER_CORE) {
+		pr_err("%s: exceeds maximum interrupt numbers per core\n", np->name);
 		goto out;
 	}
 
@@ -134,7 +151,7 @@ static struct nss_platform_data *__nss_hal_of_get_pdata(struct platform_device *
 		goto out;
 	}
 
-	npd->vmap = ioremap_nocache(npd->vphys, resource_size(&res_vphys));
+	npd->vmap = ioremap_cache(npd->vphys, resource_size(&res_vphys));
 	if (!npd->vmap) {
 		nss_info_always("%p: nss%d: ioremap() fail for vphys\n", nss_ctx, nss_ctx->id);
 		goto out;
@@ -253,27 +270,54 @@ static void __nss_hal_send_interrupt(struct nss_ctx_instance *nss_ctx, uint32_t 
 }
 
 /*
- * __nss_hal_request_irq_for_queue()
+ * __nss_hal_request_irq()
  */
-static int __nss_hal_request_irq_for_queue(struct nss_ctx_instance *nss_ctx, struct nss_platform_data *npd, int qnum)
+static int __nss_hal_request_irq(struct nss_ctx_instance *nss_ctx, struct nss_platform_data *npd, int irq_num)
 {
-	struct int_ctx_instance *int_ctx = &nss_ctx->int_ctx[qnum];
+	struct int_ctx_instance *int_ctx = &nss_ctx->int_ctx[irq_num];
 	int err;
 
-	if (qnum == 1) {
+	if (irq_num == 1) {
 		int_ctx->shift_factor = 15;
-		err = request_irq(npd->irq[qnum], nss_hal_handle_irq, 0, "nss_queue1", int_ctx);
+		err = request_irq(npd->irq[irq_num], nss_hal_handle_irq, 0, "nss_queue1", int_ctx);
 	} else {
 		int_ctx->shift_factor = 0;
-		err = request_irq(npd->irq[qnum], nss_hal_handle_irq, 0, "nss", int_ctx);
+		err = request_irq(npd->irq[irq_num], nss_hal_handle_irq, 0, "nss", int_ctx);
 	}
 	if (err) {
-		nss_warning("%p: IRQ%d request failed", nss_ctx, npd->irq[qnum]);
+		nss_warning("%p: IRQ%d request failed", nss_ctx, npd->irq[irq_num]);
 		return err;
 	}
 
-	int_ctx->irq[0] = npd->irq[qnum];
+	int_ctx->irq = npd->irq[irq_num];
+	netif_napi_add(&nss_ctx->napi_ndev, &int_ctx->napi, nss_core_handle_napi, 64);
 	return 0;
+}
+
+/*
+ * __nss_hal_init_imem
+ */
+void __nss_hal_init_imem(struct nss_ctx_instance *nss_ctx)
+{
+	struct nss_meminfo_ctx *mem_ctx = &nss_ctx->meminfo_ctx;
+
+	mem_ctx->imem_head = NSS_IMEM_START + NSS_IMEM_SIZE * nss_ctx->id;
+	mem_ctx->imem_end = mem_ctx->imem_head + NSS_IMEM_SIZE;
+	mem_ctx->imem_tail = mem_ctx->imem_head;
+
+	nss_info("%p: IMEM init: head: 0x%x end: 0x%x tail: 0x%x\n", nss_ctx,
+			mem_ctx->imem_head, mem_ctx->imem_end, mem_ctx->imem_tail);
+}
+
+/*
+ * __nss_hal_init_utcm_shared
+ */
+bool __nss_hal_init_utcm_shared(struct nss_ctx_instance *nss_ctx, uint32_t *meminfo_start)
+{
+	/*
+	 * Nothing to be done as there are no UTCM_SHARED defined for fsm9010
+	 */
+	return true;
 }
 
 /*
@@ -286,10 +330,12 @@ struct nss_hal_ops nss_hal_fsm9010_ops = {
 	.firmware_load = __nss_hal_firmware_load,
 	.debug_enable = __nss_hal_debug_enable,
 	.of_get_pdata = __nss_hal_of_get_pdata,
-	.request_irq_for_queue = __nss_hal_request_irq_for_queue,
+	.request_irq = __nss_hal_request_irq,
 	.send_interrupt = __nss_hal_send_interrupt,
 	.enable_interrupt = __nss_hal_enable_interrupt,
 	.disable_interrupt = __nss_hal_disable_interrupt,
 	.clear_interrupt_cause = __nss_hal_clear_interrupt_cause,
 	.read_interrupt_cause = __nss_hal_read_interrupt_cause,
+	.init_imem = __nss_hal_init_imem,
+	.init_utcm_shared = __nss_hal_init_utcm_shared,
 };

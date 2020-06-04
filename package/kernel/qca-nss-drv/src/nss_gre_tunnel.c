@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -16,14 +16,9 @@
 
 #include "nss_tx_rx_common.h"
 #include "nss_gre_tunnel_stats.h"
+#include "nss_gre_tunnel_log.h"
 
 #define NSS_GRE_TUNNEL_TX_TIMEOUT 3000 /* 3 Seconds */
-
-/*
- * Data structures to store GRE Tunnel nss debug stats
- */
-static DEFINE_SPINLOCK(nss_gre_tunnel_session_debug_stats_lock);
-static struct nss_stats_gre_tunnel_session_debug nss_gre_tunnel_session_debug_stats[NSS_MAX_GRE_TUNNEL_SESSIONS];
 
 /*
  * Private data structure
@@ -42,89 +37,18 @@ static struct nss_gre_tunnel_pvt {
  */
 static bool nss_gre_tunnel_verify_if_num(uint32_t if_num)
 {
-	if (nss_is_dynamic_interface(if_num) == false)
+	uint32_t type = nss_dynamic_interface_get_type(nss_gre_tunnel_get_ctx(), if_num);
+
+	switch (type) {
+	case NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INNER:
+	case NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INLINE_INNER:
+	case NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_OUTER:
+	case NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INLINE_OUTER:
+	case NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INNER_EXCEPTION:
+		return true;
+	default:
 		return false;
-
-	if (nss_dynamic_interface_get_type(if_num) != NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL)
-		return false;
-
-	return true;
-}
-
-/*
- * nss_gre_tunnel_session_stats_sync()
- *	Sync function for statistics
- */
-static void nss_gre_tunnel_session_stats_sync(struct nss_ctx_instance *nss_ctx, struct nss_gre_tunnel_stats *stats_msg,
-					uint16_t if_num)
-{
-	int i;
-	struct nss_stats_gre_tunnel_session_debug *s = NULL;
-
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-
-	spin_lock_bh(&nss_gre_tunnel_session_debug_stats_lock);
-	for (i = 0; i < NSS_MAX_GRE_TUNNEL_SESSIONS; i++) {
-		if (nss_gre_tunnel_session_debug_stats[i].if_num == if_num) {
-			s = &nss_gre_tunnel_session_debug_stats[i];
-			break;
-		}
 	}
-
-	if (!s) {
-		spin_unlock_bh(&nss_gre_tunnel_session_debug_stats_lock);
-		nss_warning("%p: Session not found: %u", nss_ctx, if_num);
-		return;
-	}
-
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_PKTS] += stats_msg->node_stats.rx_packets;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_TX_PKTS] += stats_msg->node_stats.tx_packets;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_DROPPED] += stats_msg->node_stats.rx_dropped;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_MALFORMED] += stats_msg->rx_malformed;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_INVALID_PROT] += stats_msg->rx_invalid_prot;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_DECAP_QUEUE_FULL] += stats_msg->decap_queue_full;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_SINGLE_REC_DGRAM] += stats_msg->rx_single_rec_dgram;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_INVALID_REC_DGRAM] += stats_msg->rx_invalid_rec_dgram;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_BUFFER_ALLOC_FAIL] += stats_msg->buffer_alloc_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_BUFFER_COPY_FAIL] += stats_msg->buffer_copy_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_OUTFLOW_QUEUE_FULL] += stats_msg->outflow_queue_full;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_DROPPED_HROOM] += stats_msg->rx_dropped_hroom;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_CBUFFER_ALLOC_FAIL] += stats_msg->rx_cbuf_alloc_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_CENQUEUE_FAIL] += stats_msg->rx_cenqueue_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_DECRYPT_DONE] += stats_msg->rx_decrypt_done;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_FORWARD_ENQUEUE_FAIL] += stats_msg->rx_forward_enqueue_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_TX_CBUFFER_ALLOC_FAIL] += stats_msg->tx_cbuf_alloc_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_TX_CENQUEUE_FAIL] += stats_msg->tx_cenqueue_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_DROPPED_TROOM] += stats_msg->rx_dropped_troom;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_TX_FORWARD_ENQUEUE_FAIL] += stats_msg->tx_forward_enqueue_fail;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_TX_CIPHER_DONE] += stats_msg->tx_cipher_done;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_CRYPTO_NOSUPP] += stats_msg->crypto_nosupp;
-	s->stats[NSS_STATS_GRE_TUNNEL_SESSION_RX_DROPPED_MH_VERSION] += stats_msg->rx_dropped_mh_ver;
-	spin_unlock_bh(&nss_gre_tunnel_session_debug_stats_lock);
-}
-
-/*
- * nss_gre_tunnel_session_debug_stats_get()
- *	Get session GRE Tunnel statitics.
- */
-void nss_gre_tunnel_session_debug_stats_get(struct nss_stats_gre_tunnel_session_debug *stats)
-{
-	int i;
-
-	if (!stats) {
-		nss_warning("No memory to copy gre_tunnel session stats");
-		return;
-	}
-
-	spin_lock_bh(&nss_gre_tunnel_session_debug_stats_lock);
-	for (i = 0; i < NSS_MAX_GRE_TUNNEL_SESSIONS; i++) {
-		if (nss_gre_tunnel_session_debug_stats[i].valid) {
-			memcpy(stats, &nss_gre_tunnel_session_debug_stats[i],
-			       sizeof(struct nss_stats_gre_tunnel_session_debug));
-			stats++;
-		}
-	}
-	spin_unlock_bh(&nss_gre_tunnel_session_debug_stats_lock);
 }
 
 /*
@@ -140,6 +64,11 @@ static void nss_gre_tunnel_handler(struct nss_ctx_instance *nss_ctx, struct nss_
 
 	NSS_VERIFY_CTX_MAGIC(nss_ctx);
 	BUG_ON(!nss_gre_tunnel_verify_if_num(ncm->interface));
+
+	/*
+	 * Trace Messages
+	 */
+	nss_gre_tunnel_log_rx_msg(ngtm);
 
 	/*
 	 * Is this a valid request/response packet?
@@ -159,14 +88,14 @@ static void nss_gre_tunnel_handler(struct nss_ctx_instance *nss_ctx, struct nss_
 	 */
 	switch (ngtm->cm.type) {
 	case NSS_GRE_TUNNEL_MSG_STATS:
-		nss_gre_tunnel_session_stats_sync(nss_ctx, &ngtm->msg.stats, ncm->interface);
+		nss_gre_tunnel_stats_session_sync(nss_ctx, &ngtm->msg.stats, ncm->interface);
 		break;
 	}
 
 	/*
 	 * Update the callback and app_data for NOTIFY messages
 	 */
-	if (ncm->response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (ncm->response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = (nss_ptr_t)nss_ctx->nss_top->gre_tunnel_msg_callback;
 		ncm->app_data = (nss_ptr_t)nss_ctx->subsys_dp_register[ncm->interface].app_data;
 	}
@@ -188,6 +117,48 @@ static void nss_gre_tunnel_handler(struct nss_ctx_instance *nss_ctx, struct nss_
 
 	cb(ctx, ngtm);
 }
+
+/*
+ * nss_gre_tunnel_inquiry()
+ *	Inquiry if a GRE tunnel has been established in NSS FW.
+ *
+ * Input parameters:
+ *	inquiry_info->ip_type
+ *	inquiry_info->src_ip
+ *	inquiry_info->dest_ip
+ *	inquiry_info->gre_mode
+ *	 if (gre_mode == NSS_GRE_TUNNEL_MODE_GRE_UDP)
+ *		inquiry_info->src_port
+ *		inquiry_info->dest_port
+ *	inquiry_info->encrypt_type	-- currently not checked in FW,
+ */
+nss_tx_status_t nss_gre_tunnel_inquiry(
+		struct nss_gre_tunnel_configure *inquiry_info,
+		nss_gre_tunnel_msg_callback_t cb, void *app_data)
+{
+	nss_tx_status_t nss_tx_status;
+	struct nss_gre_tunnel_msg nim;
+	struct nss_ctx_instance *nss_ctx = nss_gre_tunnel_get_ctx();
+
+	/*
+	 * Initialize inquiry message structure.
+	 * This is async message and the result will be returned
+	 * to the caller by the msg_callback passed in.
+	 */
+	memset(&nim, 0, sizeof(nim));
+	nss_gre_tunnel_msg_init(&nim, NSS_GRE_TUNNEL_INTERFACE,
+			NSS_GRE_TUNNEL_MSG_INQUIRY,
+			sizeof(struct nss_gre_tunnel_configure),
+			cb, app_data);
+	nim.msg.configure = *inquiry_info;
+	nss_tx_status = nss_gre_tunnel_tx_msg(nss_ctx, &nim);
+	if (nss_tx_status != NSS_TX_SUCCESS) {
+		nss_warning("%p: Send GT inquiry message failed\n", inquiry_info);
+	}
+
+	return nss_tx_status;
+}
+EXPORT_SYMBOL(nss_gre_tunnel_inquiry);
 
 /*
  * nss_get_gre_tunnel_context()
@@ -225,31 +196,9 @@ EXPORT_SYMBOL(nss_gre_tunnel_ifnum_with_core_id);
 nss_tx_status_t nss_gre_tunnel_tx_buf(struct sk_buff *skb, uint32_t if_num,
 				struct nss_ctx_instance *nss_ctx)
 {
-	int32_t status;
-
 	BUG_ON(!nss_gre_tunnel_verify_if_num(if_num));
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
 
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: 'GRE TUNNEL If Tx' core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
-
-	nss_info("%p: Sending to %d\n", nss_ctx, if_num);
-
-	status = nss_core_send_buffer(nss_ctx, if_num, skb,
-				      NSS_IF_DATA_QUEUE_0,
-				      H2N_BUFFER_PACKET,
-				      H2N_BIT_FLAG_VIRTUAL_BUFFER);
-	if (unlikely(status != NSS_CORE_STATUS_SUCCESS)) {
-		nss_warning("%p: Unable to enqueue 'GRE TUNNEL If Tx' packet\n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_PACKET]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_packet(nss_ctx, skb, if_num, H2N_BIT_FLAG_VIRTUAL_BUFFER | H2N_BIT_FLAG_BUFFER_REUSABLE);
 }
 EXPORT_SYMBOL(nss_gre_tunnel_tx_buf);
 
@@ -259,16 +208,12 @@ EXPORT_SYMBOL(nss_gre_tunnel_tx_buf);
  */
 nss_tx_status_t nss_gre_tunnel_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_gre_tunnel_msg *msg)
 {
-	struct nss_gre_tunnel_msg *ngtm;
 	struct nss_cmn_msg *ncm = &msg->cm;
-	struct sk_buff *nbuf;
-	int32_t status;
 
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: gre_tunnel msg dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
+	/*
+	 * Trace Messages
+	 */
+	nss_gre_tunnel_log_tx_msg(msg);
 
 	/*
 	 * Sanity check message
@@ -279,39 +224,9 @@ nss_tx_status_t nss_gre_tunnel_tx_msg(struct nss_ctx_instance *nss_ctx, struct n
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_gre_tunnel_msg)) {
-		nss_warning("%p: GRE Tunnel message length is invalid: %d",
-			    nss_ctx, ncm->len);
-		return NSS_TX_FAILURE;
-	}
+	BUG_ON(!nss_gre_tunnel_verify_if_num(ncm->interface));
 
-	/*
-	 * Alloc and copy message to skb
-	 */
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: msg dropped as command allocation failed", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	ngtm = (struct nss_gre_tunnel_msg *)skb_put(nbuf, sizeof(struct nss_gre_tunnel_msg));
-	memcpy(ngtm, msg, sizeof(struct nss_gre_tunnel_msg));
-
-	/*
-	 * Send Message
-	 */
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: Unable to enqueue 'gre tunnel message'\n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_CMD_REQ]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, msg, sizeof(*msg), NSS_NBUF_PAYLOAD_SIZE);
 }
 EXPORT_SYMBOL(nss_gre_tunnel_tx_msg);
 
@@ -403,7 +318,7 @@ struct nss_ctx_instance *nss_gre_tunnel_register_if(uint32_t if_num,
 
 	BUG_ON(!nss_gre_tunnel_verify_if_num(if_num));
 
-	spin_lock_bh(&nss_gre_tunnel_session_debug_stats_lock);
+	spin_lock_bh(&nss_gre_tunnel_stats_session_debug_lock);
 	for (i = 0; i < NSS_MAX_GRE_TUNNEL_SESSIONS; i++) {
 		if (!nss_gre_tunnel_session_debug_stats[i].valid) {
 			nss_gre_tunnel_session_debug_stats[i].valid = true;
@@ -412,7 +327,7 @@ struct nss_ctx_instance *nss_gre_tunnel_register_if(uint32_t if_num,
 			break;
 		}
 	}
-	spin_unlock_bh(&nss_gre_tunnel_session_debug_stats_lock);
+	spin_unlock_bh(&nss_gre_tunnel_stats_session_debug_lock);
 
 	if (i == NSS_MAX_GRE_TUNNEL_SESSIONS) {
 		nss_warning("%p: Cannot find free slot for GRE Tunnel session stats, I/F:%u\n", nss_ctx, if_num);
@@ -427,12 +342,11 @@ struct nss_ctx_instance *nss_gre_tunnel_register_if(uint32_t if_num,
 		return NULL;
 	}
 
-	nss_ctx->subsys_dp_register[if_num].ndev = netdev;
-	nss_ctx->subsys_dp_register[if_num].cb = cb;
-	nss_ctx->subsys_dp_register[if_num].app_data = app_ctx;
-	nss_ctx->subsys_dp_register[if_num].features = features;
+	nss_core_register_subsys_dp(nss_ctx, if_num, cb, NULL, app_ctx, netdev, features);
+
 	nss_top_main.gre_tunnel_msg_callback = ev_cb;
-	nss_core_register_handler(if_num, nss_gre_tunnel_handler, app_ctx);
+	nss_core_register_handler(nss_ctx, if_num, nss_gre_tunnel_handler, app_ctx);
+	nss_gre_tunnel_stats_dentry_create();
 
 	return nss_ctx;
 }
@@ -449,15 +363,15 @@ void nss_gre_tunnel_unregister_if(uint32_t if_num)
 
 	BUG_ON(!nss_gre_tunnel_verify_if_num(if_num));
 
-	spin_lock_bh(&nss_gre_tunnel_session_debug_stats_lock);
+	spin_lock_bh(&nss_gre_tunnel_stats_session_debug_lock);
 	for (i = 0; i < NSS_MAX_GRE_TUNNEL_SESSIONS; i++) {
 		if (nss_gre_tunnel_session_debug_stats[i].if_num == if_num) {
 			memset(&nss_gre_tunnel_session_debug_stats[i], 0,
-			       sizeof(struct nss_stats_gre_tunnel_session_debug));
+			       sizeof(struct nss_gre_tunnel_stats_session_debug));
 			break;
 		}
 	}
-	spin_unlock_bh(&nss_gre_tunnel_session_debug_stats_lock);
+	spin_unlock_bh(&nss_gre_tunnel_stats_session_debug_lock);
 
 	if (i == NSS_MAX_GRE_TUNNEL_SESSIONS) {
 		nss_warning("%p: Cannot find debug stats for GRE Tunnel session: %d\n", nss_ctx, if_num);
@@ -470,11 +384,9 @@ void nss_gre_tunnel_unregister_if(uint32_t if_num)
 		return;
 	}
 
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
-	nss_ctx->subsys_dp_register[if_num].cb = NULL;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = 0;
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
+
 	nss_top_main.gre_tunnel_msg_callback = NULL;
-	nss_core_unregister_handler(if_num);
+	nss_core_unregister_handler(nss_ctx, if_num);
 }
 EXPORT_SYMBOL(nss_gre_tunnel_unregister_if);

@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -21,8 +21,9 @@
 
 #define NSS_DP_EDMA_SUPPORTED_FEATURES (NETIF_F_HIGHDMA | NETIF_F_HW_CSUM | NETIF_F_RXCSUM | NETIF_F_SG | NETIF_F_FRAGLIST | (NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_UFO))
 #define NSS_DATA_PLANE_EDMA_MAX_INTERFACES 6
-#define NSS_DATA_PLANE_EDMA_MAX_MTU_SIZE 9000
+#define NSS_DATA_PLANE_EDMA_MAX_MTU_SIZE 9216
 #define NSS_DATA_PLANE_EDMA_PREHEADER_SIZE 32
+#define NSS_DATA_PLANE_EDMA_MAX_PACKET_LEN 65535
 
 /*
  * nss_data_plane_edma_param
@@ -70,7 +71,16 @@ static int __nss_data_plane_open(struct nss_dp_data_plane_ctx *dpc, uint32_t tx_
  */
 static int __nss_data_plane_close(struct nss_dp_data_plane_ctx *dpc)
 {
-	return NSS_DP_SUCCESS;
+	struct nss_data_plane_edma_param *dp = (struct nss_data_plane_edma_param *)dpc;
+
+	if (!dp->notify_open) {
+		return NSS_DP_SUCCESS;
+	}
+	if (nss_phys_if_close(dp->nss_ctx, dp->if_num) == NSS_TX_SUCCESS) {
+		dp->notify_open = 0;
+		return NSS_DP_SUCCESS;
+	}
+	return NSS_DP_FAILURE;
 }
 
 /*
@@ -145,25 +155,86 @@ static int __nss_data_plane_vsi_unassign(struct nss_dp_data_plane_ctx *dpc, uint
 }
 
 /*
+ * __nss_data_plane_rx_flow_steer()
+ *	Called by nss-dp to set flow rule of a data plane
+ */
+static int __nss_data_plane_rx_flow_steer(struct nss_dp_data_plane_ctx *dpc, struct sk_buff *skb,
+						uint32_t cpu, bool is_add)
+{
+	if (is_add) {
+		return nss_qrfs_set_flow_rule(skb, cpu, NSS_QRFS_MSG_FLOW_ADD);
+	}
+
+	return nss_qrfs_set_flow_rule(skb, cpu, NSS_QRFS_MSG_FLOW_DELETE);
+}
+
+/*
+ * __nss_data_plane_deinit()
+ *	Place holder for nss-dp ops to free NSS data plane resources
+ */
+static int __nss_data_plane_deinit(struct nss_dp_data_plane_ctx *dpc)
+{
+	/*
+	 * TODO: Implement free up of NSS data plane resources
+	 */
+	return NSS_TX_SUCCESS;
+}
+
+/*
  * __nss_data_plane_buf()
  *	Called by nss-dp to pass a sk_buff for xmit
  */
-static int __nss_data_plane_buf(struct nss_dp_data_plane_ctx *dpc, struct sk_buff *skb)
+static netdev_tx_t __nss_data_plane_buf(struct nss_dp_data_plane_ctx *dpc, struct sk_buff *skb)
 {
 	struct nss_data_plane_edma_param *dp = (struct nss_data_plane_edma_param *)dpc;
-	int nhead = dpc->dev->needed_headroom;
-	bool expand_skb = false;
+	int extra_head = dpc->dev->needed_headroom - skb_headroom(skb);
+	int extra_tail = 0;
+	nss_tx_status_t status;
+	struct net_device *dev = dpc->dev;
 
-	if (skb_cloned(skb) || (skb_headroom(skb) < nhead)) {
-		expand_skb = true;
+	if (skb->len < ETH_HLEN) {
+		nss_warning("skb->len ( %u ) < ETH_HLEN ( %u ) \n", skb->len, ETH_HLEN);
+		goto drop;
 	}
 
-	if (expand_skb && pskb_expand_head(skb, nhead, 0, GFP_KERNEL)) {
-		nss_trace("%p: Unable to expand skb for headroom\n", dp);
-		return NSS_TX_FAILURE;
+	if (skb->len > NSS_DATA_PLANE_EDMA_MAX_PACKET_LEN) {
+		nss_warning("skb->len ( %u ) > Maximum packet length ( %u ) \n", skb->len, NSS_DATA_PLANE_EDMA_MAX_PACKET_LEN);
+		goto drop;
 	}
 
-	return nss_phys_if_buf(dp->nss_ctx, skb, dp->if_num);
+	if (skb_cloned(skb) || extra_head > 0) {
+		/*
+		 * If it is a clone and headroom is already enough,
+		 * We just make a copy and clear the clone flag.
+		 */
+		if (extra_head <= 0)
+			extra_head = extra_tail = 0;
+		/*
+		 * If tailroom is enough to accommodate the added headroom,
+		 * then allocate a buffer of same size and do relocations.
+		 * It might help kmalloc_reserve() not double the size.
+		 */
+		if (skb->end - skb->tail >= extra_head)
+			extra_tail = -extra_head;
+
+		if (pskb_expand_head(skb, extra_head, extra_tail, GFP_ATOMIC)) {
+			nss_warning("%p: Unable to expand skb for headroom\n", dp);
+			goto drop;
+		}
+	}
+
+	status = nss_phys_if_buf(dp->nss_ctx, skb, dp->if_num);
+	if (likely(status == NSS_TX_SUCCESS)) {
+		return NETDEV_TX_OK;
+	} else if (status == NSS_TX_FAILURE_QUEUE) {
+		return NETDEV_TX_BUSY;
+	}
+
+drop:
+	dev_kfree_skb_any(skb);
+	dev->stats.tx_dropped++;
+
+	return NETDEV_TX_OK;
 }
 
 /*
@@ -193,6 +264,8 @@ static struct nss_dp_data_plane_ops dp_ops = {
 	.pause_on_off	= __nss_data_plane_pause_on_off,
 	.vsi_assign	= __nss_data_plane_vsi_assign,
 	.vsi_unassign	= __nss_data_plane_vsi_unassign,
+	.rx_flow_steer	= __nss_data_plane_rx_flow_steer,
+	.deinit		= __nss_data_plane_deinit,
 };
 
 /*
@@ -238,17 +311,14 @@ static bool nss_data_plane_register_to_nss_dp(struct nss_ctx_instance *nss_ctx, 
 	 * be redirected to the nss-dp driver as we are overriding the data plane
 	 */
 	nss_top->phys_if_handler_id[if_num] = nss_ctx->id;
-	nss_phys_if_register_handler(if_num);
+	nss_phys_if_register_handler(nss_ctx, if_num);
 
 	/*
 	 * Packets recieved on physical interface can be exceptioned to HLOS
 	 * from any NSS core so we need to register data plane for all
 	 */
-	for (core = 0; core < NSS_MAX_CORES; core++) {
-		nss_top->nss[core].subsys_dp_register[if_num].ndev = netdev;
-		nss_top->nss[core].subsys_dp_register[if_num].cb = nss_dp_receive;
-		nss_top->nss[core].subsys_dp_register[if_num].app_data = NULL;
-		nss_top->nss[core].subsys_dp_register[if_num].features = ndpp->features;
+	for (core = 0; core < nss_top->num_nss; core++) {
+		nss_core_register_subsys_dp(&nss_top->nss[core], if_num, nss_dp_receive, NULL, NULL, netdev, ndpp->features);
 	}
 
 	/*
@@ -265,6 +335,8 @@ static bool nss_data_plane_register_to_nss_dp(struct nss_ctx_instance *nss_ctx, 
  */
 static void nss_data_plane_unregister_from_nss_dp(int if_num)
 {
+	nss_cmn_unregister_service_code(nss_data_plane_edma_params[if_num].nss_ctx,
+			nss_phy_tstamp_rx_buf, NSS_PTP_EVENT_SERVICE_CODE);
 	nss_dp_restore_data_plane(nss_data_plane_edma_params[if_num].dpc.dev);
 	nss_data_plane_edma_params[if_num].dpc.dev = NULL;
 	nss_data_plane_edma_params[if_num].nss_ctx = NULL;
@@ -287,6 +359,13 @@ static void __nss_data_plane_register(struct nss_ctx_instance *nss_ctx)
 			nss_info("%p: Register data plan to data plane %d success\n", nss_ctx, i);
 		}
 	}
+
+	/*
+	 * Packets with the ptp service code should be delivered to PHY driver for timestamping
+	 */
+	nss_cmn_register_service_code(nss_ctx, nss_phy_tstamp_rx_buf,
+			NSS_PTP_EVENT_SERVICE_CODE, nss_ctx);
+
 }
 
 /*
@@ -296,11 +375,11 @@ static void __nss_data_plane_unregister(void)
 {
 	int i, core;
 
-	for (core = 0; core < NSS_MAX_CORES; core++) {
+	for (core = 0; core < nss_top_main.num_nss; core++) {
 		for (i = 1; i < NSS_DATA_PLANE_EDMA_MAX_INTERFACES + 1; i++) {
 			if (nss_top_main.nss[core].subsys_dp_register[i].ndev) {
 				nss_data_plane_unregister_from_nss_dp(i);
-				nss_top_main.nss[core].subsys_dp_register[i].ndev = NULL;
+				nss_core_unregister_subsys_dp(&nss_top_main.nss[core], i);
 			}
 		}
 	}
@@ -336,4 +415,3 @@ struct nss_data_plane_ops nss_data_plane_edma_ops = {
 	.data_plane_stats_sync = &__nss_data_plane_stats_sync,
 	.data_plane_get_mtu_sz = &__nss_data_plane_get_mtu_sz,
 };
-

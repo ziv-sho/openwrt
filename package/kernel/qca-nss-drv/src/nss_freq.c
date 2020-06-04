@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2013, 2015-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013, 2015-2019 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -19,12 +19,29 @@
  *	NSS frequency change APIs
  */
 
+#include "nss_stats.h"
 #include "nss_tx_rx_common.h"
+#include "nss_freq_log.h"
+#include "nss_freq_stats.h"
 
 #define NSS_ACK_STARTED 0
 #define NSS_ACK_FINISHED 1
 
-extern struct nss_frequency_statistics nss_freq_stat;
+#define NSS_FREQ_USG_AVG_FREQUENCY	1000		/* Time in ms over which CPU Usage is averaged */
+#define NSS_FREQ_CPU_USAGE_MAX_BOUND	75		/* MAX CPU usage equivalent to running max instructions excluding all the hazards */
+#define NSS_FREQ_CPU_USAGE_MAX		100 		/* MAX CPU usage equivalent to running max instructions including all the hazards.
+							   This is also the ideal maximum usage value. */
+
+/*
+ * Spinlock to protect the global data structure nss_freq_cpu_status
+ */
+DEFINE_SPINLOCK(nss_freq_cpu_usage_lock);
+
+/*
+ * At any point, this object has the latest data about CPU utilization.
+ */
+struct nss_freq_cpu_usage nss_freq_cpu_status;
+
 extern struct nss_runtime_sampling nss_runtime_samples;
 extern struct workqueue_struct *nss_wq;
 extern nss_work_t *nss_work;
@@ -86,15 +103,110 @@ static bool nss_freq_queue_work(void)
 }
 
 /*
- *  nss_freq_handle_core_stats()
- *	Handle the core stats
+ * nss_freq_get_cpu_usage()
+ * 	Returns the CPU usage value in percentage at any instance for a required core. Returns -1 in case of an error.
+ *
+ * Calculation frequency is 1 second. Range of usage is 0-100. This API returns -1 if CPU usage is requested for core 1.
+ * TODO: Extend this API to get CPU usage for core 1.
  */
-static void nss_freq_handle_core_stats(struct nss_ctx_instance *nss_ctx, struct nss_core_stats *core_stats)
+int8_t nss_freq_get_cpu_usage(uint32_t core_id)
+{
+	int8_t usage;
+
+	if (core_id == 0) {
+		spin_lock_bh(&nss_freq_cpu_usage_lock);
+		usage = nss_freq_cpu_status.used;
+		spin_unlock_bh(&nss_freq_cpu_usage_lock);
+
+		return usage;
+	}
+
+	nss_warning("CPU usage functionality is not supported for core %u\n", core_id);
+	return -1;
+}
+
+/*
+ * nss_freq_compute_cpu_usage()
+ * 	Computes the CPU utilization and maximum-minumun cpu utilization since boot.
+ */
+static void nss_freq_compute_cpu_usage(struct nss_ctx_instance *nss_ctx, uint32_t inst_cnt)
+{
+	uint32_t estimated_ins_capacity;
+	uint8_t actual_usage;
+	uint8_t usage;
+
+	spin_lock_bh(&nss_freq_cpu_usage_lock);
+
+	/*
+	 * If actual CPU usage turns up higher than 100, there is something wrong with the received data.
+	 * Upper bound average varies between 80% usage to 100% usage.
+	 *
+	 * TODO: To improve estimation algorithm for calculating how many actual instructions are executed.
+	 */
+	actual_usage = (inst_cnt * 100) / nss_freq_cpu_status.max_ins;
+	if ((actual_usage > NSS_FREQ_CPU_USAGE_MAX) || (actual_usage == 0)) {
+		spin_unlock_bh(&nss_freq_cpu_usage_lock);
+		return;
+	}
+
+	/*
+	 * Simpler version of below math: This is calculating the reduced number of maximum instructions
+	 * estimated_ins_capacity = nss_freq_cpu_status.avg_up% of nss_freq_cpu_status.max_ins
+	 * Calculating usage percentage: usage = (inst_cnt/estimated_ins_capacity) * 100
+	 */
+	estimated_ins_capacity = ((NSS_FREQ_CPU_USAGE_MAX_BOUND * nss_freq_cpu_status.max_ins) / 100);
+	if (estimated_ins_capacity == 0) {
+		spin_unlock_bh(&nss_freq_cpu_usage_lock);
+		return;
+	}
+	usage = (inst_cnt * 100) / estimated_ins_capacity;
+
+	/*
+	 * Average the instructions over NSS_FREQ_USG_AVG_FREQUENCY ms
+	 */
+	if (nss_freq_cpu_status.avg_ctr == NSS_FREQ_USG_AVG_FREQUENCY) {
+		nss_freq_cpu_status.used = nss_freq_cpu_status.total / NSS_FREQ_USG_AVG_FREQUENCY;
+
+		/*
+		 * Due to our estimation, this could go beyond the end limit of 100%
+		 */
+		if (nss_freq_cpu_status.used > NSS_FREQ_CPU_USAGE_MAX) {
+			nss_freq_cpu_status.used = NSS_FREQ_CPU_USAGE_MAX;
+		}
+
+		/*
+		 * Getting the all time max and min usage
+		 */
+		if (nss_freq_cpu_status.used > nss_freq_cpu_status.max) {
+			nss_freq_cpu_status.max = nss_freq_cpu_status.used;
+		}
+
+		if (nss_freq_cpu_status.used < nss_freq_cpu_status.min) {
+			nss_freq_cpu_status.min = nss_freq_cpu_status.used;
+		}
+
+		nss_trace("%p: max_instructions:%d cpu_usage:%d max_usage:%d min_usage:%d\n", nss_ctx,
+				nss_freq_cpu_status.max_ins, nss_freq_cpu_status.used, nss_freq_cpu_status.max, nss_freq_cpu_status.min);
+
+		nss_freq_cpu_status.total = 0;
+		nss_freq_cpu_status.avg_ctr = 0;
+	}
+
+	nss_freq_cpu_status.total += usage;
+	nss_freq_cpu_status.avg_ctr++;
+
+	spin_unlock_bh(&nss_freq_cpu_usage_lock);
+}
+
+/*
+ * nss_freq_scale_frequency()
+ * 	Frequency scaling algorithm to scale frequency.
+ */
+void nss_freq_scale_frequency(struct nss_ctx_instance *nss_ctx, uint32_t inst_cnt)
 {
 	uint32_t b_index;
 	uint32_t minimum;
 	uint32_t maximum;
-	uint32_t sample = core_stats->inst_cnt_total;
 	uint32_t index = nss_runtime_samples.freq_scale_index;
 
 	/*
@@ -112,7 +224,7 @@ static void nss_freq_handle_core_stats(struct nss_ctx_instance *nss_ctx, struct 
 	b_index = nss_runtime_samples.buffer_index;
 
 	nss_runtime_samples.sum = nss_runtime_samples.sum - nss_runtime_samples.buffer[b_index];
-	nss_runtime_samples.buffer[b_index] = sample;
+	nss_runtime_samples.buffer[b_index] = inst_cnt;
 	nss_runtime_samples.sum = nss_runtime_samples.sum + nss_runtime_samples.buffer[b_index];
 	nss_runtime_samples.buffer_index = (b_index + 1) & NSS_SAMPLE_BUFFER_MASK;
 
@@ -137,9 +249,9 @@ static void nss_freq_handle_core_stats(struct nss_ctx_instance *nss_ctx, struct 
 	 * Print out statistics every 10 samples
 	 */
 	if (nss_runtime_samples.message_rate_limit++ >= NSS_MESSAGE_RATE_LIMIT) {
-		nss_trace("%p: Running AVG:%x Sample:%x Divider:%d\n", nss_ctx, nss_runtime_samples.average, core_stats->inst_cnt_total, nss_runtime_samples.sample_count);
+		nss_trace("%p: Running AVG:%x Sample:%x Divider:%d\n", nss_ctx, nss_runtime_samples.average, inst_cnt, nss_runtime_samples.sample_count);
 		nss_trace("%p: Current Frequency Index:%d\n", nss_ctx, index);
-		nss_trace("%p: Auto Scale:%d Auto Scale Ready:%d\n", nss_ctx, nss_runtime_samples.freq_scale_ready, nss_cmd_buf.auto_scale);
+		nss_trace("%p: Auto Scale Ready:%d Auto Scale:%d\n", nss_ctx, nss_runtime_samples.freq_scale_ready, nss_cmd_buf.auto_scale);
 		nss_trace("%p: Current Rate:%x\n", nss_ctx, nss_runtime_samples.average);
 
 		nss_runtime_samples.message_rate_limit = 0;
@@ -167,14 +279,14 @@ static void nss_freq_handle_core_stats(struct nss_ctx_instance *nss_ctx, struct 
 			/*
 			 * If fail to increase frequency, decrease index
 			 */
-			nss_trace("frequency increase to %d inst:%x > maximum:%x\n", nss_runtime_samples.freq_scale[nss_runtime_samples.freq_scale_index].frequency, sample, maximum);
+			nss_trace("frequency increase to %d inst:%x > maximum:%x\n", nss_runtime_samples.freq_scale[nss_runtime_samples.freq_scale_index].frequency, inst_cnt, maximum);
 			if (!nss_freq_queue_work()) {
 				nss_runtime_samples.freq_scale_index--;
 			}
 		}
 
 		/*
-		 * Reset the down scale counter based on running average, so can idle properlly
+		 * Reset the down scale counter based on running average, so can idle properly
 		 */
 		if (nss_runtime_samples.average > maximum) {
 			nss_trace("down scale timeout reset running average:%x\n", nss_runtime_samples.average);
@@ -205,12 +317,36 @@ static void nss_freq_handle_core_stats(struct nss_ctx_instance *nss_ctx, struct 
 }
 
 /*
+ *  nss_freq_handle_core_stats()
+ *	Handle the core stats.
+ */
+static void nss_freq_handle_core_stats(struct nss_ctx_instance *nss_ctx, struct nss_core_stats *core_stats)
+{
+	uint32_t inst_cnt = core_stats->inst_cnt_total;
+
+	/*
+	 * compute CPU utilization by using the instruction count
+	 */
+	nss_freq_compute_cpu_usage(nss_ctx, inst_cnt);
+
+	/*
+	 * Perform frequency scaling
+	 */
+	nss_freq_scale_frequency(nss_ctx, inst_cnt);
+}
+
+/*
  * nss_freq_interface_handler()
- *	Handle NSS -> HLOS messages for Frequency Changes and Statistics
+ *	Handle NSS -> HLOS messages for Frequency Changes and Statistics.
  */
 static void nss_freq_interface_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_msg *ncm, __attribute__((unused))void *app_data) {
 
 	struct nss_corefreq_msg *ncfm = (struct nss_corefreq_msg *)ncm;
+
+	/*
+	 * Trace Messages
+	 */
+	nss_freq_log_rx_msg(ncfm);
 
 	switch (ncfm->cm.type) {
 	case COREFREQ_METADATA_TYPE_TX_FREQ_ACK:
@@ -236,48 +372,32 @@ static void nss_freq_interface_handler(struct nss_ctx_instance *nss_ctx, struct 
  */
 nss_tx_status_t nss_freq_change(struct nss_ctx_instance *nss_ctx, uint32_t eng, uint32_t stats_enable, uint32_t start_or_end)
 {
-	struct sk_buff *nbuf;
-	int32_t status;
-	struct nss_corefreq_msg *ncm;
+	struct nss_corefreq_msg ncm;
 	struct nss_freq_msg *nfc;
 
 	nss_info("%p: frequency changing to: %d\n", nss_ctx, eng);
 
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		return NSS_TX_FAILURE_NOT_READY;
-	}
+	/*
+	 * Update the max instruction count for a frequency during down scaling.
+	 * Better to update this as late as possible in the frequency update call.
+	 */
+	spin_lock_bh(&nss_freq_cpu_usage_lock);
+	nss_freq_cpu_status.max_ins = eng / 1000;
+	spin_unlock_bh(&nss_freq_cpu_usage_lock);
 
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		return NSS_TX_FAILURE;
-	}
-
-	ncm = (struct nss_corefreq_msg *)skb_put(nbuf, sizeof(struct nss_corefreq_msg));
-
-	nss_freq_msg_init(ncm, NSS_COREFREQ_INTERFACE, NSS_TX_METADATA_TYPE_NSS_FREQ_CHANGE,
+	nss_freq_msg_init(&ncm, NSS_COREFREQ_INTERFACE, NSS_TX_METADATA_TYPE_NSS_FREQ_CHANGE,
 				sizeof(struct nss_freq_msg), NULL, NULL);
-	nfc = &ncm->msg.nfc;
+	nfc = &ncm.msg.nfc;
 	nfc->frequency = eng;
 	nfc->start_or_end = start_or_end;
 	nfc->stats_enable = stats_enable;
 
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_info("%p: unable to enqueue 'nss frequency change' - marked as stopped\n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, &ncm, sizeof(ncm), NSS_NBUF_PAYLOAD_SIZE);
 }
 
 /*
  * nss_freq_sched_change()
- *	schedule a frequency work
+ *	Schedule a frequency work.
  */
 bool nss_freq_sched_change(nss_freq_scales_t index, bool auto_scale)
 {
@@ -292,7 +412,7 @@ bool nss_freq_sched_change(nss_freq_scales_t index, bool auto_scale)
 		return false;
 	}
 
-	INIT_WORK((struct work_struct *)nss_work, nss_wq_function);
+	INIT_WORK((struct work_struct *)nss_work, nss_hal_wq_function);
 
 	nss_work->frequency = nss_runtime_samples.freq_scale[index].frequency;
 
@@ -304,9 +424,39 @@ bool nss_freq_sched_change(nss_freq_scales_t index, bool auto_scale)
 }
 
 /*
+ * nss_freq_get_context()
+ *	Get NSS context instance for frequency.
+ */
+struct nss_ctx_instance *nss_freq_get_context(void)
+{
+	return (struct nss_ctx_instance *)&nss_top_main.nss[nss_top_main.frequency_handler_id];
+}
+EXPORT_SYMBOL(nss_freq_get_context);
+
+/*
  * nss_freq_register_handler()
  */
 void nss_freq_register_handler(void)
 {
-	nss_core_register_handler(NSS_COREFREQ_INTERFACE, nss_freq_interface_handler, NULL);
+	struct nss_ctx_instance *nss_ctx = nss_freq_get_context();
+	nss_core_register_handler(nss_ctx, NSS_COREFREQ_INTERFACE, nss_freq_interface_handler, NULL);
+}
+
+/*
+ * nss_freq_cpu_usage_init()
+ * 	Initialize cpu usage computing.
+ *
+ * TODO: Add support to retrieve CPU usage even if frequency scaling is disabled.
+ */
+void nss_freq_init_cpu_usage(void)
+{
+	nss_freq_cpu_status.used = 0;
+	nss_freq_cpu_status.max_ins = nss_runtime_samples.freq_scale[nss_runtime_samples.freq_scale_index].frequency / 1000;
+	nss_freq_cpu_status.total = 0;
+	nss_freq_cpu_status.max = 0;					/* Initial value is 0 to capture the highest most value during the run */
+	nss_freq_cpu_status.min = NSS_FREQ_CPU_USAGE_MAX;		/* Initial value is 100 to capture the lowest most value during the run */
+	nss_freq_cpu_status.avg_up = NSS_FREQ_CPU_USAGE_MAX_BOUND;
+	nss_freq_cpu_status.avg_ctr = 0;
+
+	nss_freq_stats_dentry_create();
 }

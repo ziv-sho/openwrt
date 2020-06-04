@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -23,8 +23,10 @@
 #include <linux/version.h>
 #include <linux/firmware.h>
 #include <linux/of.h>
+#include <linux/irq.h>
 
 #include "nss_hal.h"
+#include "nss_arch.h"
 #include "nss_core.h"
 #include "nss_tx_rx_common.h"
 #include "nss_data_plane.h"
@@ -98,11 +100,16 @@ void nss_hal_dt_parse_features(struct device_node *np, struct nss_platform_data 
 	/*
 	 * Read the features in
 	 */
+	npd->bridge_enabled = of_property_read_bool(np, "qcom,bridge-enabled");
 	npd->capwap_enabled = of_property_read_bool(np, "qcom,capwap-enabled");
+	npd->clmap_enabled = of_property_read_bool(np, "qcom,clmap-enabled");
 	npd->crypto_enabled = of_property_read_bool(np, "qcom,crypto-enabled");
 	npd->dtls_enabled = of_property_read_bool(np, "qcom,dtls-enabled");
+	npd->gre_enabled = of_property_read_bool(np, "qcom,gre-enabled");
 	npd->gre_redir_enabled = of_property_read_bool(np, "qcom,gre-redir-enabled");
 	npd->gre_tunnel_enabled = of_property_read_bool(np, "qcom,gre_tunnel_enabled");
+	npd->gre_redir_mark_enabled = of_property_read_bool(np, "qcom,gre-redir-mark-enabled");
+	npd->igs_enabled = of_property_read_bool(np, "qcom,igs-enabled");
 	npd->ipsec_enabled = of_property_read_bool(np, "qcom,ipsec-enabled");
 	npd->ipv4_enabled = of_property_read_bool(np, "qcom,ipv4-enabled");
 	npd->ipv4_reasm_enabled = of_property_read_bool(np, "qcom,ipv4-reasm-enabled");
@@ -110,107 +117,76 @@ void nss_hal_dt_parse_features(struct device_node *np, struct nss_platform_data 
 	npd->ipv6_reasm_enabled = of_property_read_bool(np, "qcom,ipv6-reasm-enabled");
 	npd->l2tpv2_enabled = of_property_read_bool(np, "qcom,l2tpv2-enabled");
 	npd->map_t_enabled = of_property_read_bool(np, "qcom,map-t-enabled");
-	npd->gre_enabled = of_property_read_bool(np, "qcom,gre-enabled");
 	npd->oam_enabled = of_property_read_bool(np, "qcom,oam-enabled");
 	npd->ppe_enabled = of_property_read_bool(np, "qcom,ppe-enabled");
 	npd->pppoe_enabled = of_property_read_bool(np, "qcom,pppoe-enabled");
 	npd->pptp_enabled = of_property_read_bool(np, "qcom,pptp-enabled");
 	npd->portid_enabled = of_property_read_bool(np, "qcom,portid-enabled");
+	npd->pvxlan_enabled = of_property_read_bool(np, "qcom,pvxlan-enabled");
+	npd->qvpn_enabled = of_property_read_bool(np, "qcom,qvpn-enabled");
+	npd->rmnet_rx_enabled = of_property_read_bool(np, "qcom,rmnet_rx-enabled");
 	npd->shaping_enabled = of_property_read_bool(np, "qcom,shaping-enabled");
+	npd->tls_enabled = of_property_read_bool(np, "qcom,tls-enabled");
 	npd->tstamp_enabled = of_property_read_bool(np, "qcom,tstamp-enabled");
 	npd->turbo_frequency = of_property_read_bool(np, "qcom,turbo-frequency");
 	npd->tun6rd_enabled = of_property_read_bool(np, "qcom,tun6rd-enabled");
 	npd->tunipip6_enabled = of_property_read_bool(np, "qcom,tunipip6-enabled");
+	npd->vlan_enabled = of_property_read_bool(np, "qcom,vlan-enabled");
+	npd->vxlan_enabled = of_property_read_bool(np, "qcom,vxlan-enabled");
 	npd->wlanredirect_enabled = of_property_read_bool(np, "qcom,wlanredirect-enabled");
 	npd->wifioffload_enabled = of_property_read_bool(np, "qcom,wlan-dataplane-offload-enabled");
-	npd->bridge_enabled = of_property_read_bool(np, "qcom,bridge-enabled");
-	npd->vlan_enabled = of_property_read_bool(np, "qcom,vlan-enabled");
+	npd->match_enabled = of_property_read_bool(np, "qcom,match-enabled");
+	npd->mirror_enabled = of_property_read_bool(np, "qcom,mirror-enabled");
 }
-
 /*
- * nss_hal_dummy_netdev_setup()
- *	Dummy setup for net_device handler
+ * nss_hal_clean_up_irq()
  */
-static void nss_hal_dummy_netdev_setup(struct net_device *ndev)
+static void nss_hal_clean_up_irq(struct int_ctx_instance *int_ctx)
 {
-
-}
-
-/*
- * nss_hal_clean_up_netdevice()
- */
-static void nss_hal_clean_up_netdevice(struct int_ctx_instance *int_ctx)
-{
-	int i;
-
-	for (i = 0; i < NSS_MAX_IRQ_PER_INSTANCE; i++) {
-		if (int_ctx->irq[i]) {
-			free_irq(int_ctx->irq[i], int_ctx);
-			int_ctx->irq[i] = 0;
-		}
-	}
-
-	if (!int_ctx->ndev) {
+	if (!int_ctx->irq) {
 		return;
 	}
 
-	unregister_netdev(int_ctx->ndev);
-	free_netdev(int_ctx->ndev);
-	int_ctx->ndev = NULL;
+	/*
+	 * Wait here till the poll is complete.
+	 */
+	napi_disable(&int_ctx->napi);
+
+	/*
+	 * Interrupt can be raised here before free_irq() but as napi is
+	 * already disabled, it will be never sheduled from hard_irq
+	 * context.
+	 */
+	irq_clear_status_flags(int_ctx->irq, IRQ_DISABLE_UNLAZY);
+	free_irq(int_ctx->irq, int_ctx);
+	int_ctx->irq = 0;
+
+	netif_napi_del(&int_ctx->napi);
 }
 
 /*
- * nss_hal_register_netdevice()
+ * nss_hal_register_irq()
  */
-static int nss_hal_register_netdevice(struct nss_ctx_instance *nss_ctx, struct nss_platform_data *npd, int qnum)
+static int nss_hal_register_irq(struct nss_ctx_instance *nss_ctx, struct nss_platform_data *npd,
+					struct net_device *netdev, int irq_num)
 {
 	struct nss_top_instance *nss_top = &nss_top_main;
-	struct net_device *netdev;
-	struct netdev_priv_instance *ndev_priv;
-	struct int_ctx_instance *int_ctx = &nss_ctx->int_ctx[qnum];
+	struct int_ctx_instance *int_ctx = &nss_ctx->int_ctx[irq_num];
 	int err = 0;
-
-	/*
-	 * Register netdevice handlers
-	 */
-#if (LINUX_VERSION_CODE <= KERNEL_VERSION(3, 16, 0))
-	netdev = alloc_netdev(sizeof(struct netdev_priv_instance),
-					"qca-nss-dev%d", nss_hal_dummy_netdev_setup);
-#else
-	netdev = alloc_netdev(sizeof(struct netdev_priv_instance),
-					"qca-nss-dev%d", NET_NAME_ENUM, nss_hal_dummy_netdev_setup);
-#endif
-	if (!netdev) {
-		nss_warning("%p: Could not allocate net_device for queue %d\n", nss_ctx, qnum);
-		return -ENOMEM;
-	}
-
-	netdev->netdev_ops = &nss_netdev_ops;
-	netdev->ethtool_ops = &nss_ethtool_ops;
-	err = register_netdev(netdev);
-	if (err) {
-		nss_warning("%p: Could not register net_device %d\n", nss_ctx, qnum);
-		free_netdev(netdev);
-		return err;
-	}
 
 	/*
 	 * request for IRQs
 	 */
 	int_ctx->nss_ctx = nss_ctx;
-	int_ctx->ndev = netdev;
-	err = nss_top->hal_ops->request_irq_for_queue(nss_ctx, npd, qnum);
+	err = nss_top->hal_ops->request_irq(nss_ctx, npd, irq_num);
 	if (err) {
-		nss_warning("%p: IRQ request for queue %d failed", nss_ctx, qnum);
+		nss_warning("%p: IRQ request for queue %d failed", nss_ctx, irq_num);
 		return err;
 	}
 
 	/*
 	 * Register NAPI for NSS core interrupt
 	 */
-	ndev_priv = netdev_priv(netdev);
-	ndev_priv->int_ctx = int_ctx;
-	netif_napi_add(netdev, &int_ctx->napi, nss_core_handle_napi, 64);
 	napi_enable(&int_ctx->napi);
 	return 0;
 }
@@ -254,7 +230,13 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	nss_ctx = &nss_top->nss[nss_dev->id];
 	nss_ctx->id = nss_dev->id;
 #endif
+	nss_ctx->num_irq = npd->num_irq;
 	nss_ctx->nss_top = nss_top;
+
+	/*
+	 * dev is required for dma map/unmap
+	 */
+	nss_ctx->dev = &nss_dev->dev;
 
 	nss_info("%p: NSS_DEV_ID %s\n", nss_ctx, dev_name(&nss_dev->dev));
 
@@ -263,19 +245,14 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	 */
 	err = nss_top->hal_ops->firmware_load(nss_ctx, nss_dev, npd);
 	if (err) {
-		nss_warning("%p: firmware load from driver failed\n", nss_ctx);
+		nss_info_always("%p: firmware load from driver failed\n", nss_ctx);
 		goto err_init;
 	}
 
-	/*
-	 * Both NSS cores controlled by same regulator, Hook only Once
-	 */
-	if (!nss_ctx->id) {
-		err = nss_top->hal_ops->clock_configure(nss_ctx, nss_dev, npd);
-		if (err) {
-			nss_warning("%p: clock configure failed\n", nss_ctx);
-			goto err_init;
-		}
+	err = nss_top->hal_ops->clock_configure(nss_ctx, nss_dev, npd);
+	if (err) {
+		nss_info_always("%p: clock configure failed\n", nss_ctx);
+		goto err_init;
 	}
 
 	/*
@@ -317,10 +294,21 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	nss_info("%d:ctx=%p, vphys=%x, vmap=%p, nphys=%x, nmap=%p", nss_ctx->id,
 			nss_ctx, nss_ctx->vphys, nss_ctx->vmap, nss_ctx->nphys, nss_ctx->nmap);
 
-	for (i = 0; i < npd->num_queue; i++) {
-		err = nss_hal_register_netdevice(nss_ctx, npd, i);
+	if (!nss_meminfo_init(nss_ctx)) {
+		nss_info_always("%p: meminfo init failed\n", nss_ctx);
+		err = -EFAULT;
+		goto err_init;
+	}
+
+	/*
+	 * Initialize the dummy netdevice.
+	 */
+	init_dummy_netdev(&nss_ctx->napi_ndev);
+
+	for (i = 0; i < npd->num_irq; i++) {
+		err = nss_hal_register_irq(nss_ctx, npd, &nss_ctx->napi_ndev, i);
 		if (err) {
-			goto err_register_netdevice;
+			goto err_register_irq;
 		}
 	}
 
@@ -334,7 +322,17 @@ int nss_hal_probe(struct platform_device *nss_dev)
 			npd->tstamp_enabled = NSS_FEATURE_NOT_ENABLED;
 		}
 	}
-	spin_lock_bh(&(nss_top->lock));
+
+	/*
+	 * Features that will always be enabled on both cores
+	 */
+	nss_dynamic_interface_register_handler(nss_ctx);
+	nss_n2h_register_handler(nss_ctx);
+	nss_project_register_handler(nss_ctx);
+	nss_qrfs_register_handler(nss_ctx);
+	nss_c2c_tx_register_handler(nss_ctx);
+	nss_c2c_rx_register_handler(nss_ctx);
+	nss_unaligned_register_handler(nss_ctx);
 
 	/*
 	 * Check functionalities are supported by this NSS core
@@ -347,24 +345,18 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	if (npd->ipv4_enabled == NSS_FEATURE_ENABLED) {
 		nss_top->ipv4_handler_id = nss_dev->id;
 		nss_ipv4_register_handler();
-		if (npd->pppoe_enabled == NSS_FEATURE_ENABLED) {
-			nss_pppoe_register_handler();
-		}
 
 		nss_top->edma_handler_id = nss_dev->id;
 		nss_edma_register_handler();
-		nss_eth_rx_register_handler();
-		nss_n2h_register_handler();
+		nss_eth_rx_register_handler(nss_ctx);
 		nss_lag_register_handler();
-		nss_dynamic_interface_register_handler();
 		nss_top->trustsec_tx_handler_id = nss_dev->id;
 		nss_trustsec_tx_register_handler();
 
-		for (i = 0; i < NSS_MAX_VIRTUAL_INTERFACES; i++) {
-			nss_top->virt_if_handler_id[i] = nss_dev->id;
-		}
+		nss_top->virt_if_handler_id = nss_dev->id;
 
-		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_802_3_REDIR] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GENERIC_REDIR_N2H] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GENERIC_REDIR_H2N] = nss_dev->id;
 	}
 
 	if (npd->capwap_enabled == NSS_FEATURE_ENABLED) {
@@ -387,15 +379,32 @@ int nss_hal_probe(struct platform_device *nss_dev)
 		nss_ipv6_reasm_register_handler();
 	}
 
+	/*
+	 * TODO: when Crypto is moved to Core-1 it needs to
+	 * flush based on nss_top->crypto_enabled
+	 */
 	if (npd->crypto_enabled == NSS_FEATURE_ENABLED) {
-		nss_top->crypto_enabled = 1;
 		nss_top->crypto_handler_id = nss_dev->id;
+#if defined(NSS_HAL_IPQ807x_SUPPORT) || defined(NSS_HAL_IPQ60XX_SUPPORT) || defined(NSS_HAL_IPQ50XX_SUPPORT)
+		nss_crypto_cmn_register_handler();
+#else
+		nss_top->crypto_enabled = 1;
 		nss_crypto_register_handler();
+#endif
 	}
 
 	if (npd->ipsec_enabled == NSS_FEATURE_ENABLED) {
 		nss_top->ipsec_handler_id = nss_dev->id;
+#if defined(NSS_HAL_IPQ807x_SUPPORT) || defined(NSS_HAL_IPQ60XX_SUPPORT) || defined(NSS_HAL_IPQ50XX_SUPPORT)
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_IPSEC_CMN_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_IPSEC_CMN_OUTER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_IPSEC_CMN_MDATA_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_IPSEC_CMN_MDATA_OUTER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_IPSEC_CMN_REDIRECT] = nss_dev->id;
+		nss_ipsec_cmn_register_handler();
+#else
 		nss_ipsec_register_handler();
+#endif
 	}
 
 	if (npd->wlanredirect_enabled == NSS_FEATURE_ENABLED) {
@@ -406,6 +415,11 @@ int nss_hal_probe(struct platform_device *nss_dev)
 		nss_top->tun6rd_handler_id = nss_dev->id;
 	}
 
+	if (npd->pppoe_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->pppoe_handler_id = nss_dev->id;
+		nss_pppoe_register_handler();
+	}
+
 	if (npd->pptp_enabled == NSS_FEATURE_ENABLED) {
 		nss_top->pptp_handler_id = nss_dev->id;
 		nss_pptp_register_handler();
@@ -414,6 +428,7 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	if (npd->ppe_enabled == NSS_FEATURE_ENABLED) {
 		nss_top->ppe_handler_id = nss_dev->id;
 		nss_ppe_register_handler();
+		nss_ppe_vp_register_handler();
 	}
 
 	if (npd->l2tpv2_enabled == NSS_FEATURE_ENABLED) {
@@ -423,8 +438,14 @@ int nss_hal_probe(struct platform_device *nss_dev)
 
 	if (npd->dtls_enabled == NSS_FEATURE_ENABLED) {
 		nss_top->dtls_handler_id = nss_dev->id;
+#if defined(NSS_HAL_IPQ807x_SUPPORT) || defined(NSS_HAL_IPQ60XX_SUPPORT) || defined(NSS_HAL_IPQ50XX_SUPPORT)
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_DTLS_CMN_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_DTLS_CMN_OUTER] = nss_dev->id;
+		nss_dtls_cmn_register_handler();
+#else
 		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_DTLS] = nss_dev->id;
 		nss_dtls_register_handler();
+#endif
 	}
 
 	if (npd->map_t_enabled == NSS_FEATURE_ENABLED) {
@@ -445,13 +466,24 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	if (npd->gre_redir_enabled == NSS_FEATURE_ENABLED) {
 		nss_top->gre_redir_handler_id = nss_dev->id;
 		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_REDIR] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_REDIR_WIFI_HOST_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_REDIR_WIFI_OFFL_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_REDIR_SJACK_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_REDIR_OUTER] = nss_dev->id;
 		nss_gre_redir_register_handler();
+		nss_gre_redir_lag_us_register_handler();
+		nss_gre_redir_lag_ds_register_handler();
+		nss_top->sjack_handler_id = nss_dev->id;
 		nss_sjack_register_handler();
 	}
 
 	if (npd->gre_tunnel_enabled == NSS_FEATURE_ENABLED) {
 		nss_top->gre_tunnel_handler_id = nss_dev->id;
-		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_OUTER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INLINE_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INLINE_OUTER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_GRE_TUNNEL_INNER_EXCEPTION] = nss_dev->id;
 	}
 
 	if (npd->portid_enabled == NSS_FEATURE_ENABLED) {
@@ -464,6 +496,10 @@ int nss_hal_probe(struct platform_device *nss_dev)
 		nss_top->wifi_handler_id = nss_dev->id;
 		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_VAP] = nss_dev->id;
 		nss_wifi_register_handler();
+		nss_wifili_register_handler();
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_WIFILI_INTERNAL] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_WIFILI_EXTERNAL0] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_WIFILI_EXTERNAL1] = nss_dev->id;
 	}
 
 	if (npd->tstamp_enabled == NSS_FEATURE_ENABLED) {
@@ -488,16 +524,87 @@ int nss_hal_probe(struct platform_device *nss_dev)
 		nss_vlan_register_handler();
 	}
 
+#if defined(NSS_HAL_IPQ807x_SUPPORT) || defined(NSS_HAL_IPQ60XX_SUPPORT)
+	if (npd->qvpn_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->qvpn_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_QVPN_OUTER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_QVPN_INNER] = nss_dev->id;
+		nss_qvpn_register_handler();
+	}
+#endif
+
+	if (npd->pvxlan_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->pvxlan_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_PVXLAN_HOST_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_PVXLAN_OUTER] = nss_dev->id;
+	}
+
+	if (npd->rmnet_rx_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->rmnet_rx_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_RMNET_RX_N2H] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_RMNET_RX_H2N] = nss_dev->id;
+	}
+
+	if (npd->igs_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->igs_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_IGS] = nss_dev->id;
+		nss_info("%d: NSS IGS is enabled", nss_dev->id);
+	}
+
+	if (npd->gre_redir_mark_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->gre_redir_mark_handler_id = nss_dev->id;
+		nss_gre_redir_mark_register_handler();
+	}
+
+	if (npd->clmap_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->clmap_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_CLMAP_US] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_CLMAP_DS] = nss_dev->id;
+	}
+
+	if (npd->vxlan_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->vxlan_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_VXLAN_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_VXLAN_OUTER] = nss_dev->id;
+		nss_vxlan_init();
+	}
+
+	if (npd->match_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->match_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_MATCH] = nss_dev->id;
+		nss_match_init();
+	}
+
+#if defined(NSS_HAL_IPQ807x_SUPPORT) || defined(NSS_HAL_IPQ60XX_SUPPORT)
+	if (npd->tls_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->tls_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_TLS_INNER] = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_TLS_OUTER] = nss_dev->id;
+		nss_tls_register_handler();
+	}
+#endif
+	if (npd->mirror_enabled == NSS_FEATURE_ENABLED) {
+		nss_top->mirror_handler_id = nss_dev->id;
+		nss_top->dynamic_interface_table[NSS_DYNAMIC_INTERFACE_TYPE_MIRROR] = nss_dev->id;
+		nss_mirror_register_handler();
+		nss_info("%d: NSS mirror is enabled", nss_dev->id);
+	}
+
 	if (nss_ctx->id == 0) {
 #if (NSS_FREQ_SCALE_SUPPORT == 1)
 		nss_freq_register_handler();
+
+		/*
+		 * Init CPU usage detail
+		 * Note: As of now, ubi cpu usage is supported only for core0
+		 */
+		nss_freq_init_cpu_usage();
 #endif
-		nss_lso_rx_register_handler();
+
+		nss_lso_rx_register_handler(nss_ctx);
 	}
 
 	nss_top->frequency_handler_id = nss_dev->id;
-
-	spin_unlock_bh(&(nss_top->lock));
 
 	/*
 	 * Initialize decongestion callbacks to NULL
@@ -517,7 +624,7 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	 */
 	err = nss_top->hal_ops->core_reset(nss_dev, nss_ctx->nmap, nss_ctx->load, nss_top->clk_src);
 	if (err) {
-		goto err_register_netdevice;
+		goto err_register_irq;
 	}
 
 	/*
@@ -535,30 +642,18 @@ int nss_hal_probe(struct platform_device *nss_dev)
 	}
 
 	/*
-	 * Increment number of cores
+	 * Enable interrupts for NSS core.
 	 */
-	nss_top->num_nss++;
-
-	/*
-	 * dev is required for dma map/unmap
-	 */
-	nss_ctx->dev = &nss_dev->dev;
-
-	/*
-	 * Enable interrupts for NSS core
-	 */
-	nss_hal_enable_interrupt(nss_ctx, nss_ctx->int_ctx[0].shift_factor, NSS_HAL_SUPPORTED_INTERRUPTS);
-
-	if (npd->num_queue > 1) {
-		nss_hal_enable_interrupt(nss_ctx, nss_ctx->int_ctx[1].shift_factor, NSS_HAL_SUPPORTED_INTERRUPTS);
+	for (i = 0; i < npd->num_irq; i++) {
+		nss_hal_enable_interrupt(nss_ctx, nss_ctx->int_ctx[i].shift_factor, NSS_HAL_SUPPORTED_INTERRUPTS);
 	}
 
 	nss_info("%p: All resources initialized and nss core%d has been brought out of reset", nss_ctx, nss_dev->id);
 	goto out;
 
-err_register_netdevice:
-	for (i = 0; i < npd->num_queue; i++) {
-		nss_hal_clean_up_netdevice(&nss_ctx->int_ctx[i]);
+err_register_irq:
+	for (i = 0; i < npd->num_irq; i++) {
+		nss_hal_clean_up_irq(&nss_ctx->int_ctx[i]);
 	}
 
 err_init:
@@ -587,6 +682,7 @@ int nss_hal_remove(struct platform_device *nss_dev)
 {
 	struct nss_top_instance *nss_top = &nss_top_main;
 	struct nss_ctx_instance *nss_ctx = &nss_top->nss[nss_dev->id];
+	int i;
 
 	/*
 	 * Clean up debugfs
@@ -594,18 +690,12 @@ int nss_hal_remove(struct platform_device *nss_dev)
 	nss_stats_clean();
 
 	/*
-	 * Clean up netdev/interrupts
+	 * Clear up the resources associated with the interrupt
 	 */
-	nss_hal_disable_interrupt(nss_ctx, nss_ctx->int_ctx[0].shift_factor, NSS_HAL_SUPPORTED_INTERRUPTS);
-	nss_hal_clean_up_netdevice(&nss_ctx->int_ctx[0]);
-
-	/*
-	 * Check if second interrupt is supported
-	 * If so then clear resources for second interrupt as well
-	 */
-	if (nss_ctx->int_ctx[1].ndev) {
-		nss_hal_disable_interrupt(nss_ctx, nss_ctx->int_ctx[1].shift_factor, NSS_HAL_SUPPORTED_INTERRUPTS);
-		nss_hal_clean_up_netdevice(&nss_ctx->int_ctx[1]);
+	for (i = 0; i < nss_ctx->num_irq; i++) {
+		nss_hal_disable_interrupt(nss_ctx, nss_ctx->int_ctx[i].shift_factor,
+					  NSS_HAL_SUPPORTED_INTERRUPTS);
+		nss_hal_clean_up_irq(&nss_ctx->int_ctx[i]);
 	}
 
 	/*

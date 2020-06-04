@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2013, 2015-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013, 2015-2019, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -44,10 +44,11 @@
 #include <linux/fab_scaling.h>
 #endif
 
-#define NSS_H2N_INTR_EMPTY_BUFFER_QUEUE_BIT     0
-#define NSS_H2N_INTR_DATA_COMMAND_QUEUE_BIT     1
-#define NSS_H2N_INTR_TX_UNBLOCKED_BIT           11
-#define NSS_H2N_INTR_TRIGGER_COREDUMP_BIT       15
+#define NSS_H2N_INTR_EMPTY_BUFFER_QUEUE_BIT		0
+#define NSS_H2N_INTR_DATA_COMMAND_QUEUE_BIT		1
+#define NSS_H2N_INTR_TX_UNBLOCKED_BIT			11
+#define NSS_H2N_INTR_EMPTY_PAGED_BUFFER_QUEUE_BIT	12
+#define NSS_H2N_INTR_TRIGGER_COREDUMP_BIT		15
 
 /*
  * Interrupt type to cause vector.
@@ -55,7 +56,12 @@
 static uint32_t intr_cause[] = {(1 << NSS_H2N_INTR_EMPTY_BUFFER_QUEUE_BIT),
 				(1 << NSS_H2N_INTR_DATA_COMMAND_QUEUE_BIT),
 				(1 << NSS_H2N_INTR_TX_UNBLOCKED_BIT),
-				(1 << NSS_H2N_INTR_TRIGGER_COREDUMP_BIT)};
+				(1 << NSS_H2N_INTR_TRIGGER_COREDUMP_BIT),
+				(1 << NSS_H2N_INTR_EMPTY_PAGED_BUFFER_QUEUE_BIT)};
+
+#if (NSS_DT_SUPPORT == 1)
+bool nss_crypto_is_scaled = false;
+#endif
 
 #if (NSS_FW_DBG_SUPPORT == 1)
 /*
@@ -176,6 +182,121 @@ static struct msm_gpiomux_config nss_spi_gpiomux[] = {
 	},
 };
 #endif /* NSS_FW_DBG_SUPPORT */
+
+/*
+ * nss_hal_scale_fabric()
+ *	DT supported fabric scaling
+ */
+void nss_hal_scale_fabric(uint32_t work_frequency)
+{
+#if (NSS_DT_SUPPORT == 1)
+	nss_crypto_pm_event_callback_t crypto_pm_cb;
+	bool auto_scale;
+	bool turbo;
+
+#if (NSS_FABRIC_SCALING_SUPPORT == 1)
+	/*
+	 * PM framework
+	 */
+	scale_fabrics();
+#endif
+	if ((nss_fab0_clk != NULL) && (nss_fab1_clk != NULL)) {
+		if (work_frequency >= NSS_FREQ_733) {
+			clk_set_rate(nss_fab0_clk, NSS_FABRIC0_TURBO);
+			clk_set_rate(nss_fab1_clk, NSS_FABRIC1_TURBO);
+		} else if (work_frequency > NSS_FREQ_110) {
+			clk_set_rate(nss_fab0_clk, NSS_FABRIC0_NOMINAL);
+			clk_set_rate(nss_fab1_clk, NSS_FABRIC1_NOMINAL);
+		} else {
+			clk_set_rate(nss_fab0_clk, NSS_FABRIC0_IDLE);
+			clk_set_rate(nss_fab1_clk, NSS_FABRIC1_IDLE);
+		}
+
+		/*
+		 * notify crypto about the clock change
+		 */
+		crypto_pm_cb = nss_top_main.crypto_pm_callback;
+		if (crypto_pm_cb) {
+			turbo = (work_frequency >= NSS_FREQ_733);
+			auto_scale = nss_cmd_buf.auto_scale;
+			nss_crypto_is_scaled = crypto_pm_cb(nss_top_main.crypto_pm_ctx, turbo, auto_scale);
+		}
+	}
+#endif
+}
+
+/*
+ * nss_hal_pm_support()
+ *	Supported in 3.4
+ */
+void nss_hal_pm_support(uint32_t work_frequency)
+{
+#if (NSS_PM_SUPPORT == 1)
+	if (!pm_client) {
+		return;
+	}
+
+	if (work_frequency >= NSS_FREQ_733) {
+		nss_pm_set_perf_level(pm_client, NSS_PM_PERF_LEVEL_TURBO);
+	} else if (work_frequency > NSS_FREQ_110) {
+		nss_pm_set_perf_level(pm_client, NSS_PM_PERF_LEVEL_NOMINAL);
+	} else {
+		nss_pm_set_perf_level(pm_client, NSS_PM_PERF_LEVEL_IDLE);
+	}
+#endif
+}
+
+/*
+ * nss_hal_freq_change()
+ *	Send frequency change message, and clock adjustment
+ */
+void nss_hal_freq_change(nss_work_t *my_work)
+{
+	nss_freq_change(&nss_top_main.nss[NSS_CORE_0], my_work->frequency, my_work->stats_enable, 0);
+	if (nss_top_main.nss[NSS_CORE_1].state == NSS_CORE_STATE_INITIALIZED) {
+		nss_freq_change(&nss_top_main.nss[NSS_CORE_1], my_work->frequency, my_work->stats_enable, 0);
+	}
+	clk_set_rate(nss_core0_clk, my_work->frequency);
+
+	nss_freq_change(&nss_top_main.nss[NSS_CORE_0], my_work->frequency, my_work->stats_enable, 1);
+	if (nss_top_main.nss[NSS_CORE_1].state == NSS_CORE_STATE_INITIALIZED) {
+		nss_freq_change(&nss_top_main.nss[NSS_CORE_1], my_work->frequency, my_work->stats_enable, 1);
+	}
+}
+
+/*
+ * nss_hal_wq_function()
+ *	Added to Handle BH requests to kernel
+ */
+void nss_hal_wq_function(struct work_struct *work)
+{
+	nss_work_t *my_work = (nss_work_t *)work;
+
+	mutex_lock(&nss_top_main.wq_lock);
+#if (NSS_DT_SUPPORT == 1)
+	/*
+	 * If crypto clock is in Turbo, disable scaling for other
+	 * NSS subsystem components and retain them at turbo
+	 */
+	if (nss_crypto_is_scaled) {
+		nss_cmd_buf.current_freq = nss_runtime_samples.freq_scale[NSS_FREQ_HIGH_SCALE].frequency;
+		mutex_unlock(&nss_top_main.wq_lock);
+		return;
+	}
+#endif
+
+	nss_hal_freq_change(my_work);
+
+	/*
+	 * Supported in 3.4
+	 */
+	nss_hal_pm_support(my_work->frequency);
+
+	nss_hal_scale_fabric(my_work->frequency);
+
+	mutex_unlock(&nss_top_main.wq_lock);
+	kfree((void *)work);
+}
 
 /*
  * nss_hal_handle_irq()
@@ -313,6 +434,11 @@ static struct nss_platform_data *__nss_hal_of_get_pdata(struct platform_device *
 		goto out;
 	}
 
+	if (npd->num_irq > NSS_MAX_IRQ_PER_CORE) {
+		pr_err("%s: exceeds maximum interrupt numbers per core\n", np->name);
+		goto out;
+	}
+
 	nss_ctx = &nss_top->nss[npd->id];
 	nss_ctx->id = npd->id;
 
@@ -338,7 +464,7 @@ static struct nss_platform_data *__nss_hal_of_get_pdata(struct platform_device *
 		goto out;
 	}
 
-	npd->vmap = ioremap_nocache(npd->vphys, resource_size(&res_vphys));
+	npd->vmap = ioremap_cache(npd->vphys, resource_size(&res_vphys));
 	if (!npd->vmap) {
 		nss_info_always("%p: nss%d: ioremap() fail for vphys\n", nss_ctx, nss_ctx->id);
 		goto out;
@@ -349,7 +475,9 @@ static struct nss_platform_data *__nss_hal_of_get_pdata(struct platform_device *
 	 */
 	for (i = 0; i < resource_size(&res_vphys) ; i += 4) {
 		nss_write_32(npd->vmap, i, 0);
+		NSS_CORE_DMA_CACHE_MAINT((npd->vmap + i), 4, DMA_TO_DEVICE);
 	}
+	NSS_CORE_DSB();
 
 	/*
 	 * Get IRQ numbers
@@ -528,7 +656,7 @@ static int __nss_hal_core_reset(struct platform_device *nss_dev, void __iomem *m
 	nss_write_32(map, NSS_REGS_CORE_INT_STAT2_TYPE_OFFSET, 0xFFFF);
 
 	/*
-	 * Set IF check value
+	 * Enable Instruction Fetch range checking between 0x4000 0000 to 0xBFFF FFFF.
 	 */
 	nss_write_32(map, NSS_REGS_CORE_IFETCH_RANGE_OFFSET, 0xBF004001);
 
@@ -831,6 +959,13 @@ static int __nss_hal_clock_configure(struct nss_ctx_instance *nss_ctx, struct pl
 #endif
 	int i, err;
 
+	/*
+	 * Both ubi core on ipq806x attach to the same clock, configure just the core0
+	 */
+	if (nss_ctx->id) {
+		return 0;
+	}
+
 	nss_core0_clk = clk_get(&nss_dev->dev, NSS_CORE_CLK);
 	if (IS_ERR(nss_core0_clk)) {
 		err = PTR_ERR(nss_core0_clk);
@@ -1027,27 +1162,55 @@ static void __nss_hal_send_interrupt(struct nss_ctx_instance *nss_ctx, uint32_t 
 }
 
 /*
- * __nss_hal_request_irq_for_queue()
+ * __nss_hal_request_irq()
  */
-static int __nss_hal_request_irq_for_queue(struct nss_ctx_instance *nss_ctx, struct nss_platform_data *npd, int qnum)
+static int __nss_hal_request_irq(struct nss_ctx_instance *nss_ctx, struct nss_platform_data *npd, int irq_num)
 {
-	struct int_ctx_instance *int_ctx = &nss_ctx->int_ctx[qnum];
+	struct int_ctx_instance *int_ctx = &nss_ctx->int_ctx[irq_num];
 	int err;
 
-	if (qnum == 1) {
+	if (irq_num == 1) {
 		int_ctx->shift_factor = 15;
-		err = request_irq(npd->irq[qnum], nss_hal_handle_irq, 0, "nss_queue1", int_ctx);
+		err = request_irq(npd->irq[irq_num], nss_hal_handle_irq, 0, "nss_queue1", int_ctx);
 	} else {
 		int_ctx->shift_factor = 0;
-		err = request_irq(npd->irq[qnum], nss_hal_handle_irq, 0, "nss", int_ctx);
+		err = request_irq(npd->irq[irq_num], nss_hal_handle_irq, 0, "nss", int_ctx);
 	}
 	if (err) {
-		nss_info_always("%p: IRQ%d request failed", nss_ctx, npd->irq[qnum]);
+		nss_info_always("%p: IRQ%d request failed", nss_ctx, npd->irq[irq_num]);
 		return err;
 	}
 
-	int_ctx->irq[0] = npd->irq[qnum];
+	int_ctx->irq = npd->irq[irq_num];
+	netif_napi_add(&nss_ctx->napi_ndev, &int_ctx->napi, nss_core_handle_napi, 64);
+
 	return 0;
+}
+
+/*
+ * __nss_hal_init_imem
+ */
+void __nss_hal_init_imem(struct nss_ctx_instance *nss_ctx)
+{
+	struct nss_meminfo_ctx *mem_ctx = &nss_ctx->meminfo_ctx;
+
+	mem_ctx->imem_head = NSS_IMEM_START + NSS_IMEM_SIZE * nss_ctx->id;
+	mem_ctx->imem_end = mem_ctx->imem_head + NSS_IMEM_SIZE;
+	mem_ctx->imem_tail = mem_ctx->imem_head;
+
+	nss_info("%p: IMEM init: head: 0x%x end: 0x%x tail: 0x%x\n", nss_ctx,
+			mem_ctx->imem_head, mem_ctx->imem_end, mem_ctx->imem_tail);
+}
+
+/*
+ * __nss_hal_init_utcm_shared
+ */
+bool __nss_hal_init_utcm_shared(struct nss_ctx_instance *nss_ctx, uint32_t *meminfo_start)
+{
+	/*
+	 * Nothing to be done as there are no UTCM_SHARED defined for ipq806x
+	 */
+	return true;
 }
 
 /*
@@ -1062,10 +1225,12 @@ struct nss_hal_ops nss_hal_ipq806x_ops = {
 #if (NSS_DT_SUPPORT == 1)
 	.of_get_pdata = __nss_hal_of_get_pdata,
 #endif
-	.request_irq_for_queue = __nss_hal_request_irq_for_queue,
+	.request_irq = __nss_hal_request_irq,
 	.send_interrupt = __nss_hal_send_interrupt,
 	.enable_interrupt = __nss_hal_enable_interrupt,
 	.disable_interrupt = __nss_hal_disable_interrupt,
 	.clear_interrupt_cause = __nss_hal_clear_interrupt_cause,
 	.read_interrupt_cause = __nss_hal_read_interrupt_cause,
+	.init_imem = __nss_hal_init_imem,
+	.init_utcm_shared = __nss_hal_init_utcm_shared,
 };

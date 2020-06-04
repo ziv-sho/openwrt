@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2013, 2016-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013, 2016-2020 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -28,15 +28,23 @@
 #include <nss_hal_ops.h>
 
 extern struct clk *nss_core0_clk;
+extern struct clk *nss_core1_clk;
 extern struct nss_runtime_sampling nss_runtime_samples;
 extern struct clk *nss_fab0_clk;
 extern struct clk *nss_fab1_clk;
+extern void nss_hal_wq_function(struct work_struct *work);
 
 #if defined(NSS_HAL_IPQ806X_SUPPORT)
 extern struct nss_hal_ops nss_hal_ipq806x_ops;
 #endif
 #if defined(NSS_HAL_IPQ807x_SUPPORT)
 extern struct nss_hal_ops nss_hal_ipq807x_ops;
+#endif
+#if defined(NSS_HAL_IPQ60XX_SUPPORT)
+extern struct nss_hal_ops nss_hal_ipq60xx_ops;
+#endif
+#if defined(NSS_HAL_IPQ50XX_SUPPORT)
+extern struct nss_hal_ops nss_hal_ipq50xx_ops;
 #endif
 #if defined(NSS_HAL_FSM9010_SUPPORT)
 extern struct nss_hal_ops nss_hal_fsm9010_ops;
@@ -47,8 +55,9 @@ extern struct nss_hal_ops nss_hal_fsm9010_ops;
 					NSS_N2H_INTR_DATA_QUEUE_1 | \
 					NSS_N2H_INTR_EMPTY_BUFFERS_SOS | \
 					NSS_N2H_INTR_TX_UNBLOCKED | \
-					NSS_N2H_INTR_COREDUMP_COMPLETE_0 | \
-					NSS_N2H_INTR_COREDUMP_COMPLETE_1)
+					NSS_N2H_INTR_COREDUMP_COMPLETE | \
+					NSS_N2H_INTR_PROFILE_DMA | \
+					NSS_N2H_INTR_PAGED_EMPTY_BUFFERS_SOS)
 
 /*
  * nss_hal_read_interrupt_cause()

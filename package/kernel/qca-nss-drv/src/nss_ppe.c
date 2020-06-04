@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -15,6 +15,12 @@
  */
 
 #include "nss_ppe.h"
+#include "nss_ppe_stats.h"
+
+DEFINE_SPINLOCK(nss_ppe_stats_lock);
+
+struct nss_ppe_stats_debug nss_ppe_debug_stats;
+struct nss_ppe_pvt ppe_pvt;
 
 /*
  * nss_ppe_verify_ifnum()
@@ -26,163 +32,236 @@ static inline bool nss_ppe_verify_ifnum(int if_num)
 }
 
 /*
- * nss_ppe_stats_sync
- *	PPE connection sync stats from NSS
+ * nss_ppe_callback()
+ *	Callback to handle the completion of NSS->HLOS messages.
  */
-static void nss_ppe_stats_sync(struct nss_ctx_instance *nss_ctx, struct nss_ppe_sync_stats_msg *stats_msg, uint16_t if_num)
+static void nss_ppe_callback(void *app_data, struct nss_ppe_msg *npm)
 {
-	spin_lock_bh(&nss_ppe_stats_lock);
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V4_L3_FLOWS] += stats_msg->nss_ppe_v4_l3_flows;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V4_L2_FLOWS] += stats_msg->nss_ppe_v4_l2_flows;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V4_CREATE_REQ] += stats_msg->nss_ppe_v4_create_req;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V4_CREATE_FAIL] += stats_msg->nss_ppe_v4_create_fail;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V4_DESTROY_REQ] += stats_msg->nss_ppe_v4_destroy_req;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V4_DESTROY_FAIL] += stats_msg->nss_ppe_v4_destroy_fail;
+	nss_ppe_msg_callback_t callback = (nss_ppe_msg_callback_t)ppe_pvt.cb;
+	void *data = ppe_pvt.app_data;
 
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V6_L3_FLOWS] += stats_msg->nss_ppe_v6_l3_flows;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V6_L2_FLOWS] += stats_msg->nss_ppe_v6_l2_flows;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V6_CREATE_REQ] += stats_msg->nss_ppe_v6_create_req;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V6_CREATE_FAIL] += stats_msg->nss_ppe_v6_create_fail;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V6_DESTROY_REQ] += stats_msg->nss_ppe_v6_destroy_req;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_V6_DESTROY_FAIL] += stats_msg->nss_ppe_v6_destroy_fail;
+	ppe_pvt.response = NSS_TX_SUCCESS;
+	ppe_pvt.cb = NULL;
+	ppe_pvt.app_data = NULL;
 
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_NH_FULL] += stats_msg->nss_ppe_fail_nh_full;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_FLOW_FULL] += stats_msg->nss_ppe_fail_flow_full;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_HOST_FULL] += stats_msg->nss_ppe_fail_host_full;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_PUBIP_FULL] += stats_msg->nss_ppe_fail_pubip_full;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_PORT_SETUP] += stats_msg->nss_ppe_fail_port_setup;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_RW_FIFO_FULL] += stats_msg->nss_ppe_fail_rw_fifo_full;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_FLOW_COMMAND] += stats_msg->nss_ppe_fail_flow_command;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_UNKNOWN_PROTO] += stats_msg->nss_ppe_fail_unknown_proto;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_PPE_UNRESPONSIVE] += stats_msg->nss_ppe_fail_ppe_unresponsive;
-	nss_ppe_debug_stats.conn_stats[NSS_STATS_PPE_FAIL_FQG_FULL] += stats_msg->nss_ppe_fail_fqg_full;
-	spin_unlock_bh(&nss_ppe_stats_lock);
+	if (npm->cm.response != NSS_CMN_RESPONSE_ACK) {
+		nss_warning("ppe error response %d\n", npm->cm.response);
+		ppe_pvt.response = npm->cm.response;
+	}
+
+	if (callback) {
+		callback(data, npm);
+	}
+	complete(&ppe_pvt.complete);
 }
 
 /*
- * nss_ppe_stats_conn_get()
- *	Get ppe connection stats.
+ * nss_ppe_tx_msg()
+ *	Transmit a ppe message to NSSFW
  */
-void nss_ppe_stats_conn_get(uint32_t *stats)
+nss_tx_status_t nss_ppe_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_ppe_msg *msg)
 {
-	if (!stats) {
-		nss_warning("No memory to copy ppe connection stats");
-		return;
-	}
-
-	spin_lock_bh(&nss_ppe_stats_lock);
-
-	if (!nss_ppe_debug_stats.valid) {
-		spin_unlock_bh(&nss_ppe_stats_lock);
-		nss_warning("PPE base address not initialized!\n");
-		return;
-	}
+	struct nss_cmn_msg *ncm = &msg->cm;
 
 	/*
-	 * Get flow stats
+	 * Trace messages.
 	 */
-	memcpy(stats, nss_ppe_debug_stats.conn_stats, (sizeof(uint32_t) * NSS_STATS_PPE_CONN_MAX));
+	nss_ppe_log_tx_msg(msg);
 
-	spin_unlock_bh(&nss_ppe_stats_lock);
+	/*
+	 * Sanity check the message
+	 */
+	if (ncm->type >= NSS_PPE_MSG_MAX) {
+		nss_warning("%p: message type out of range: %d\n", nss_ctx, ncm->type);
+		return NSS_TX_FAILURE;
+	}
+
+	if (!nss_ppe_verify_ifnum(ncm->interface)) {
+		nss_warning("%p: invalid interface %d\n", nss_ctx, ncm->interface);
+		return NSS_TX_FAILURE;
+	}
+
+	return nss_core_send_cmd(nss_ctx, msg, sizeof(*msg), NSS_NBUF_PAYLOAD_SIZE);
 }
 
 /*
- * nss_ppe_stats_l3_get()
- *	Get ppe L3 debug stats.
+ * nss_ppe_tx_msg_sync()
+ *	Transmit a ppe message to NSS firmware synchronously.
  */
-void nss_ppe_stats_l3_get(uint32_t *stats)
+nss_tx_status_t nss_ppe_tx_msg_sync(struct nss_ctx_instance *nss_ctx, struct nss_ppe_msg *npm)
 {
-	if (!stats) {
-		nss_warning("No memory to copy ppe l3 dbg stats\n");
-		return;
+	nss_tx_status_t status;
+	int ret = 0;
+
+	down(&ppe_pvt.sem);
+	ppe_pvt.cb = (void *)npm->cm.cb;
+	ppe_pvt.app_data = (void *)npm->cm.app_data;
+
+	npm->cm.cb = (nss_ptr_t)nss_ppe_callback;
+	npm->cm.app_data = (nss_ptr_t)NULL;
+
+	status = nss_ppe_tx_msg(nss_ctx, npm);
+	if (status != NSS_TX_SUCCESS) {
+		nss_warning("%p: ppe_tx_msg failed\n", nss_ctx);
+		up(&ppe_pvt.sem);
+		return status;
 	}
 
-	spin_lock_bh(&nss_ppe_stats_lock);
-
-	if (!nss_ppe_debug_stats.valid) {
-		spin_unlock_bh(&nss_ppe_stats_lock);
-		nss_warning("PPE base address not initialized!\n");
-		return;
+	ret = wait_for_completion_timeout(&ppe_pvt.complete, msecs_to_jiffies(NSS_PPE_TX_TIMEOUT));
+	if (!ret) {
+		nss_warning("%p: ppe msg tx failed due to timeout\n", nss_ctx);
+		ppe_pvt.response = NSS_TX_FAILURE;
 	}
 
-	nss_ppe_reg_write(PPE_L3_DBG_WR_OFFSET, PPE_L3_DBG0_OFFSET);
-	nss_ppe_reg_read(PPE_L3_DBG_RD_OFFSET, &stats[NSS_STATS_PPE_L3_DBG_0]);
-
-	nss_ppe_reg_write(PPE_L3_DBG_WR_OFFSET, PPE_L3_DBG1_OFFSET);
-	nss_ppe_reg_read(PPE_L3_DBG_RD_OFFSET, &stats[NSS_STATS_PPE_L3_DBG_1]);
-
-	nss_ppe_reg_write(PPE_L3_DBG_WR_OFFSET, PPE_L3_DBG2_OFFSET);
-	nss_ppe_reg_read(PPE_L3_DBG_RD_OFFSET, &stats[NSS_STATS_PPE_L3_DBG_2]);
-
-	nss_ppe_reg_write(PPE_L3_DBG_WR_OFFSET, PPE_L3_DBG3_OFFSET);
-	nss_ppe_reg_read(PPE_L3_DBG_RD_OFFSET, &stats[NSS_STATS_PPE_L3_DBG_3]);
-
-	nss_ppe_reg_write(PPE_L3_DBG_WR_OFFSET, PPE_L3_DBG4_OFFSET);
-	nss_ppe_reg_read(PPE_L3_DBG_RD_OFFSET, &stats[NSS_STATS_PPE_L3_DBG_4]);
-
-	nss_ppe_reg_write(PPE_L3_DBG_WR_OFFSET, PPE_L3_DBG_PORT_OFFSET);
-	nss_ppe_reg_read(PPE_L3_DBG_RD_OFFSET, &stats[NSS_STATS_PPE_L3_DBG_PORT]);
-
-	spin_unlock_bh(&nss_ppe_stats_lock);
+	status = ppe_pvt.response;
+	up(&ppe_pvt.sem);
+	return status;
 }
 
 /*
- * nss_ppe_stats_code_get()
- *	Get ppe CPU and DROP code for last packet processed.
+ * nss_ppe_get_context()
+ *	Get NSS context instance for ppe
  */
-void nss_ppe_stats_code_get(uint32_t *stats)
+struct nss_ctx_instance *nss_ppe_get_context(void)
 {
-	uint32_t drop_0, drop_1, cpu_code;
+	return (struct nss_ctx_instance *)&nss_top_main.nss[nss_top_main.ppe_handler_id];
+}
 
-	nss_trace("%s(%d) Start\n", __func__, __LINE__);
-	if (!stats) {
-		nss_warning("No memory to copy ppe code\n");
-		return;
+/*
+ * nss_ppe_msg_init()
+ *	Initialize nss_ppe_msg.
+ */
+void nss_ppe_msg_init(struct nss_ppe_msg *ncm, uint16_t if_num, uint32_t type, uint32_t len, void *cb, void *app_data)
+{
+	nss_cmn_msg_init(&ncm->cm, if_num, type, len, cb, app_data);
+}
+
+/*
+ * nss_ppe_tx_ipsec_config_msg
+ *	API to send inline IPsec port configure message to NSS FW
+ */
+nss_tx_status_t nss_ppe_tx_ipsec_config_msg(uint32_t nss_ifnum, uint32_t vsi_num, uint16_t mtu,
+						__attribute__((unused))uint16_t mru)
+{
+	struct nss_ctx_instance *nss_ctx = nss_ppe_get_context();
+	struct nss_ppe_msg npm = {0};
+
+	if (!nss_ctx) {
+		nss_warning("Can't get nss context\n");
+		return NSS_TX_FAILURE;
 	}
 
-	if (!nss_ppe_debug_stats.valid) {
-		nss_warning("PPE base address not initialized!\n");
-		return;
+	if (vsi_num >= NSS_PPE_VSI_NUM_MAX) {
+		nss_warning("Invalid vsi number:%u\n", vsi_num);
+		return NSS_TX_FAILURE;
 	}
 
-	spin_lock_bh(&nss_ppe_stats_lock);
-	nss_ppe_reg_write(PPE_PKT_CODE_WR_OFFSET, PPE_PKT_CODE_DROP0_OFFSET);
-	nss_ppe_reg_read(PPE_PKT_CODE_RD_OFFSET, &drop_0);
+	nss_ppe_msg_init(&npm, NSS_PPE_INTERFACE, NSS_PPE_MSG_IPSEC_PORT_CONFIG,
+			sizeof(struct nss_ppe_ipsec_port_config_msg), NULL, NULL);
 
-	nss_ppe_reg_write(PPE_PKT_CODE_WR_OFFSET, PPE_PKT_CODE_DROP1_OFFSET);
-	nss_ppe_reg_read(PPE_PKT_CODE_RD_OFFSET, &drop_1);
+	npm.msg.ipsec_config.nss_ifnum = nss_ifnum;
+	npm.msg.ipsec_config.vsi_num = vsi_num;
+	npm.msg.ipsec_config.mtu = mtu;
 
-	stats[NSS_STATS_PPE_CODE_DROP] = PPE_PKT_CODE_DROP_GET(drop_0, drop_1);
+	return nss_ppe_tx_msg_sync(nss_ctx, &npm);
+}
 
-	nss_ppe_reg_write(PPE_PKT_CODE_WR_OFFSET, PPE_PKT_CODE_CPU_OFFSET);
-	nss_ppe_reg_read(PPE_PKT_CODE_RD_OFFSET, &cpu_code);
+/*
+ * nss_ppe_tx_ipsec_mtu_msg
+ *	API to send IPsec port MTU change message to NSS FW
+ */
+nss_tx_status_t nss_ppe_tx_ipsec_mtu_msg(uint32_t nss_ifnum, uint16_t mtu, __attribute__((unused))uint16_t mru)
+{
+	struct nss_ctx_instance *nss_ctx = nss_ppe_get_context();
+	struct nss_ppe_msg npm = {0};
 
-	stats[NSS_STATS_PPE_CODE_CPU] = PPE_PKT_CODE_CPU_GET(cpu_code);
+	if (!nss_ctx) {
+		nss_warning("Can't get nss context\n");
+		return NSS_TX_FAILURE;
+	}
 
-	spin_unlock_bh(&nss_ppe_stats_lock);
+	nss_ppe_msg_init(&npm, NSS_PPE_INTERFACE, NSS_PPE_MSG_IPSEC_PORT_MTU_CHANGE,
+			sizeof(struct nss_ppe_ipsec_port_mtu_msg), NULL, NULL);
+
+	npm.msg.ipsec_mtu.nss_ifnum = nss_ifnum;
+	npm.msg.ipsec_mtu.mtu = mtu;
+
+	return nss_ppe_tx_msg_sync(nss_ctx, &npm);
+}
+
+/*
+ * nss_ppe_tx_ipsec_add_intf_msg
+ *	API to attach NSS interface to IPsec port
+ */
+nss_tx_status_t nss_ppe_tx_ipsec_add_intf_msg(uint32_t nss_ifnum)
+{
+	struct nss_ctx_instance *nss_ctx = nss_ppe_get_context();
+	struct nss_ppe_msg npm = {0};
+
+	if (!nss_ctx) {
+		nss_warning("Can't get nss context\n");
+		return NSS_TX_FAILURE;
+	}
+
+	nss_ppe_msg_init(&npm, NSS_PPE_INTERFACE, NSS_PPE_MSG_IPSEC_ADD_INTF,
+			sizeof(struct nss_ppe_ipsec_add_intf_msg), NULL, NULL);
+
+	npm.msg.ipsec_addif.nss_ifnum = nss_ifnum;
+
+	return nss_ppe_tx_msg_sync(nss_ctx, &npm);
+}
+
+/*
+ * nss_ppe_tx_ipsec_del_intf_msg
+ *	API to detach NSS interface to IPsec port
+ */
+nss_tx_status_t nss_ppe_tx_ipsec_del_intf_msg(uint32_t nss_ifnum)
+{
+	struct nss_ctx_instance *nss_ctx = nss_ppe_get_context();
+	struct nss_ppe_msg npm = {0};
+
+	if (!nss_ctx) {
+		nss_warning("Can't get nss context\n");
+		return NSS_TX_FAILURE;
+	}
+
+	nss_ppe_msg_init(&npm, NSS_PPE_INTERFACE, NSS_PPE_MSG_IPSEC_DEL_INTF,
+			sizeof(struct nss_ppe_ipsec_del_intf_msg), NULL, NULL);
+
+	npm.msg.ipsec_delif.nss_ifnum = nss_ifnum;
+
+	return nss_ppe_tx_msg_sync(nss_ctx, &npm);
 }
 
 /*
  * nss_ppe_handler()
- *	Handle NSS -> HLOS messages for ppe tunnel
+ *	Handle NSS -> HLOS messages for ppe
  */
 static void nss_ppe_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_msg *ncm, __attribute__((unused))void *app_data)
 {
 	struct nss_ppe_msg *msg = (struct nss_ppe_msg *)ncm;
+	void *ctx;
 
-	nss_trace("nss_ctx: %p ppe msg: %p", nss_ctx, msg);
+	nss_ppe_msg_callback_t cb;
+
+	nss_trace("nss_ctx: %p ppe msg: %p\n", nss_ctx, msg);
 	BUG_ON(!nss_ppe_verify_ifnum(ncm->interface));
+
+	/*
+	 * Trace messages.
+	 */
+	nss_ppe_log_rx_msg(msg);
 
 	/*
 	 * Is this a valid request/response packet?
 	 */
 	if (ncm->type >= NSS_PPE_MSG_MAX) {
-		nss_warning("%p: received invalid message %d for PPE interface", nss_ctx, ncm->type);
+		nss_warning("%p: received invalid message %d for PPE interface\n", nss_ctx, ncm->type);
 		return;
 	}
 
 	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_ppe_msg)) {
-		nss_warning("%p: Length of message is greater than required: %d", nss_ctx, nss_cmn_get_msg_len(ncm));
+		nss_warning("%p: Length of message is greater than required: %d\n", nss_ctx, nss_cmn_get_msg_len(ncm));
 		return;
 	}
 
@@ -192,8 +271,28 @@ static void nss_ppe_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_msg
 		 * session debug stats embeded in session stats msg
 		 */
 		nss_ppe_stats_sync(nss_ctx, &msg->msg.stats, ncm->interface);
-		break;
+		return;
 	}
+
+	/*
+	 * Log failures
+	 */
+	nss_core_log_msg_failures(nss_ctx, ncm);
+
+	/*
+	 * Do we have a call back
+	 */
+	if (!ncm->cb) {
+		return;
+	}
+
+	/*
+	 * callback
+	 */
+	cb = (nss_ppe_msg_callback_t)ncm->cb;
+	ctx = (void *)ncm->app_data;
+
+	cb(ctx, msg);
 }
 
 /*
@@ -204,7 +303,13 @@ static void nss_ppe_handler(struct nss_ctx_instance *nss_ctx, struct nss_cmn_msg
  */
 void nss_ppe_register_handler(void)
 {
-	nss_core_register_handler(NSS_PPE_INTERFACE, nss_ppe_handler, NULL);
+	struct nss_ctx_instance *nss_ctx = nss_ppe_get_context();
+
+	nss_core_register_handler(nss_ctx, NSS_PPE_INTERFACE, nss_ppe_handler, NULL);
+
+	if (nss_ppe_debug_stats.valid) {
+		nss_ppe_stats_dentry_create();
+	}
 }
 
 /*
@@ -260,4 +365,7 @@ void nss_ppe_init(void)
 	nss_ppe_debug_stats.if_num = 0;
 	nss_ppe_debug_stats.if_index = 0;
 	spin_unlock_bh(&nss_ppe_stats_lock);
+
+	sema_init(&ppe_pvt.sem, 1);
+	init_completion(&ppe_pvt.complete);
 }

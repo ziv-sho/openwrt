@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2015, 2017-2020, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -14,206 +14,588 @@
  **************************************************************************
  */
 
- /**
-  * nss_gre_redir.h
-  * 	NSS TO HLOS interface definitions.
-  */
+/**
+ * @file nss_gre_redir.h
+ *	NSS GRE Redirect interface definitions.
+ */
 
 #ifndef __NSS_GRE_REDIR_H
 #define __NSS_GRE_REDIR_H
 
-#define NSS_GRE_REDIR_MAX_INTERFACES 24
-#define NSS_GRE_REDIR_IP_DF_OVERRIDE_FLAG 0x80
-#define NSS_GRE_REDIR_PER_PACKET_METADATA_OFFSET 4
-#define NSS_GRE_REDIR_IP_HDR_TYPE_IPV4 1
-#define NSS_GRE_REDIR_IP_HDR_TYPE_IPV6 2
-
-/*
- * nss_gre_redir_direction
- *	when pkt goes from host to NSS, host sets dir as NSS_GRE_REDIR_HLOS_TO_NSS
- *	when pkt goes from NSS to host, NSS sets dir as NSS_GRE_REDIR_NSS_TO_HLOS
- *	if host receives any pkt with dir set as NSS_GRE_REDIR_HLOS_TO_NSS, then it is an exception pkt. Handle
- *	it appropriately.
+/**
+ * @addtogroup nss_gre_redirect_subsystem
+ * @{
  */
-enum nss_gre_redir_direction {
-	NSS_GRE_REDIR_HLOS_TO_NSS = 1,
-	NSS_GRE_REDIR_NSS_TO_HLOS = 2
+
+#define NSS_GRE_REDIR_MAX_INTERFACES 24			/**< Maximum number of redirect interfaces. */
+#define NSS_GRE_REDIR_IP_DF_OVERRIDE_FLAG 0x80		/**< Override Do not Fragment bit in IPv4 flags. */
+#define NSS_GRE_REDIR_PER_PACKET_METADATA_OFFSET 4	/**< Offset of per packet metadata from start of packet. */
+#define NSS_GRE_REDIR_MAX_RADIO 5			/**< Maximum number of radios. */
+#define NSS_GRE_REDIR_HEADER_VERSION 0			/**< Version for GRE header. */
+
+/**
+ * nss_gre_redir_ip_hdr_type
+ *	IP header types.
+ */
+enum nss_gre_redir_ip_hdr_type {
+	NSS_GRE_REDIR_IP_HDR_TYPE_IPV4 = 1,
+	NSS_GRE_REDIR_IP_HDR_TYPE_IPV6 = 2,
 };
 
 /**
- * gre_redir messages
- */
-
-/**
- * GRE Redirect request/response types
+ * nss_gre_redir_message_types
+ *	Message types for GRE redirect requests and responses.
  */
 enum nss_gre_redir_message_types {
-	NSS_GRE_REDIR_TX_TUNNEL_CONFIGURE_MSG,	/**< GRE_REDIR Tunnel configuration */
-	NSS_GRE_REDIR_TX_INTERFACE_MAP_MSG,	/**< GRE_REDIR tunnel ID to nex NSS if mapping */
-	NSS_GRE_REDIR_TX_INTERFACE_UNMAP_MSG,	/**< unmap GRE_REDIR tunnel ID to next if mapping */
-	NSS_GRE_REDIR_RX_STATS_SYNC_MSG,	/**< sync GRE_REDIR tunnel stats */
-	NSS_GRE_REDIR_MAX_MSG_TYPES,		/**< GRE_REDIR message max type number */
+	NSS_GRE_REDIR_TX_TUNNEL_INNER_CONFIGURE_MSG,	/**< Configure message for inner node. */
+	NSS_GRE_REDIR_TX_TUNNEL_OUTER_CONFIGURE_MSG,	/**< Configure message for outer node. */
+	NSS_GRE_REDIR_TX_INTERFACE_MAP_MSG,		/**< Interface map message. */
+	NSS_GRE_REDIR_TX_INTERFACE_UNMAP_MSG,		/**< Interface unmap message. */
+	NSS_GRE_REDIR_TX_SJACK_MAP_MSG,			/**< SJACK map message. */
+	NSS_GRE_REDIR_TX_SJACK_UNMAP_MSG,		/**< SJACK unmap message. */
+	NSS_GRE_REDIR_RX_STATS_SYNC_MSG,		/**< Statistics synchronization message. */
+	NSS_GRE_REDIR_EXCEPTION_DS_REG_CB_MSG,		/**< Configure message to register callback. */
+	NSS_GRE_REDIR_MAX_MSG_TYPES,			/**< Maximum message type. */
 };
 
 /**
- * @brief: GRE tunnel configure message
+ * nss_gre_redir_error_types
+ *	Error types for GRE redirect configuration messages.
  */
-struct nss_gre_redir_configure_msg {
-	uint32_t ip_hdr_type;			/**< IP hdr type (IPv4 or IPv6) */
-	uint32_t ip_src_addr[4];		/**< IPv4/IPv6 src addr(lower 4 bytes are applicable for IPv4) */
-	uint32_t ip_dest_addr[4];		/**< IPv4/IPv6 dest addr(lower 4 bytes are applicable for IPv4) */
-	uint8_t ip_df_policy;			/**< IP hdr default Do Not Fragment policy */
-	uint8_t ip_ttl;				/**< IP hdr Time To Live value */
-	uint8_t gre_version;			/**< GRE hdr version */
-	uint8_t rps_hint;			/**< 0: Use Core 0, 1: Use Core 1 */
+enum nss_gre_redir_error_types {
+	NSS_GRE_REDIR_ERROR_NONE,			/**< Configuration successful. */
+	NSS_GRE_REDIR_ERROR_UNKNOWN_MSG_TYPE,		/**< Unknown configuration message type error. */
+	NSS_GRE_REDIR_ERROR_INVALID_IP_HDR_TYPE,	/**< Invalid IP header type error. */
+	NSS_GRE_REDIR_ERROR_MAP_TABLE_FULL,		/**< Map table full error. */
+	NSS_GRE_REDIR_ERROR_MAP_INVALID_PARAM,		/**< Invalid parameter with map message error. */
+	NSS_GRE_REDIR_ERROR_UNMAP_INVALID_PARAM,	/**< Invalid parameter with unmap message error. */
+	NSS_GRE_REDIR_ERROR_ENCAP_MAP_EXIST,		/**< Encapsulation map entry already exist. */
+	NSS_GRE_REDIR_ERROR_DECAP_MAP_EXIST,		/**< Decapsulation map entry already exist. */
+	NSS_GRE_REDIR_ERROR_ENCAP_MAP_ALLOC_FAIL,	/**< Encapsulation map entry allocation failure error. */
+	NSS_GRE_REDIR_ERROR_DECAP_MAP_ALLOC_FAIL,	/**< Decapsulation map entry allocation failure error. */
+	NSS_GRE_REDIR_ERROR_ENCAP_ENTRY_UNMAPPED,	/**< Encapsulation map entry already unmapped. */
+	NSS_GRE_REDIR_ERROR_DECAP_ENTRY_UNMAPPED,	/**< Decapsulation map entry already unmapped. */
+	NSS_GRE_REDIR_ERROR_INVALID_ETH_IF,		/**< Invalid Ethernet NSS interface. */
+	NSS_GRE_REDIR_ERROR_INVALID_VAP_NEXTHOP_IF,	/**< Invalid nexthop NSS interface. */
+	NSS_GRE_REDIR_ERROR_INVALID_PEER_INTERFACE,	/**< Invalid peer interface during tunnel configuration. */
 };
 
 /**
- * @brief GRE tunnel interface mapping message
+ * nss_gre_redir_tunnel_types
+ *	GRE tunnel types.
+ */
+enum nss_gre_redir_tunnel_types {
+	NSS_GRE_REDIR_TUNNEL_TYPE_UNKNOWN,	/**< Reserved. */
+	NSS_GRE_REDIR_TUNNEL_TYPE_TUN,		/**< Tunnel mode. */
+	NSS_GRE_REDIR_TUNNEL_TYPE_DTUN,		/**< D-tunnel mode. */
+	NSS_GRE_REDIR_TUNNEL_TYPE_SPLIT,	/**< Split mode. */
+	NSS_GRE_REDIR_TUNNEL_TYPE_MAX,		/**< Maximum tunnel type. */
+};
+
+/**
+ * nss_gre_redir_inner_configure_msg
+ *	Message information for configuring GRE inner node.
+ */
+struct nss_gre_redir_inner_configure_msg {
+	uint32_t ip_hdr_type;	/**< IP header type (IPv4 or IPv6). */
+
+	/**
+	 * IPv4 or IPv6 source address (lower 4 bytes are applicable for IPv4).
+	 */
+	uint32_t ip_src_addr[4];
+
+	/**
+	 * IPv4 or IPv6 destination address (lower 4 bytes are applicable for IPv4).
+	 */
+	uint32_t ip_dest_addr[4];
+
+	/**
+	 * The host outer-interface which handles post-encapsulation exception packets
+	 * originating from this inner interface.
+	 */
+	uint32_t except_outerif;
+
+	uint8_t ip_df_policy;	/**< Default Do Not Fragment policy for the IP header. */
+	uint8_t ip_ttl;		/**< Time-to-live value for the IP header. */
+	uint8_t gre_version;	/**< Header version. */
+};
+
+/**
+ * nss_gre_redir_outer_configure_msg
+ *	Message information for configuring GRE outer node.
+ */
+struct nss_gre_redir_outer_configure_msg {
+	uint32_t ip_hdr_type;		     /**< IP header type (IPv4 or IPv6). */
+
+	/**
+	 * The host inner-interface which handles post-decapsulation exception packets
+	 * originating from this outer interface, for flows destined to a VAP handled
+	 * by host.
+	 */
+	uint32_t except_hostif;
+
+	/**
+	 * The host inner-interface which handles post-decapsulation exception packets
+	 * originating from this outer interface, for flows destined to a VAP handled
+	 * by NSS.
+	 */
+	uint32_t except_offlif;
+
+	/**
+	 * The host inner-interface which handles post-decapsulation exception packets
+	 * originating from this outer interface, for flows destined to SJACK.
+	 */
+	uint32_t except_sjackif;
+
+	/**
+	 * CPU core to which these packets should be steered.
+	 * - 0 -- Use core 0
+	 * - 1 -- Use core 1
+	 * - 2 -- Use core 2
+	 * - 3 -- Use core 3
+	 */
+	uint8_t rps_hint;
+
+	/**
+	 * Flag to indicate validity of RPS hint.
+	 */
+	uint8_t rps_hint_valid;
+
+};
+
+/**
+ * nss_gre_redir_exception_ds_reg_cb_msg
+ *	Message information to register callback on VAP for GRE exception downstream.
+ */
+struct nss_gre_redir_exception_ds_reg_cb_msg {
+	uint32_t dst_vap_nssif;	/**< NSS VAP interface on which the callback is registered. */
+};
+
+/**
+ * nss_gre_redir_interface_map_msg
+ *	Message information for adding a VAP interface-to-tunnel ID mapping.
  */
 struct nss_gre_redir_interface_map_msg {
-	uint32_t nss_if_num;		/**< NSS Interface used to forward packets for GRE Tunnel ID */
-	uint16_t gre_tunnel_id;		/**< GRE Tunnel ID */
+	uint32_t vap_nssif;			/**< NSS VAP interface. */
+	uint32_t nexthop_nssif;			/**< Next hop NSS interface number. */
+	uint16_t radio_id;			/**< Radio ID to derive tunnel ID. */
+	uint16_t vap_id;			/**< VAP ID to derive tunnel ID. */
+	uint16_t lag_en;			/**< Flag for LAG mode. */
+	uint16_t tunnel_type;			/**< Type of tunnel. */
+
+	/**
+	 * IPsec security association pattern. Pattern
+	 * 0x5A is supported only.
+	 */
+	uint8_t ipsec_pattern;
 };
 
 /**
- * @brief GRE tunnel interface unmap message
+ * nss_gre_redir_interface_unmap_msg
+ *	Message information for deleting a VAP interface-to-tunnel ID mapping.
  */
 struct nss_gre_redir_interface_unmap_msg {
-	uint16_t gre_tunnel_id;		/**< GRE Tunnel ID */
+	uint32_t vap_nssif;	/**< NSS VAP interface. */
+	uint16_t radio_id;	/**< Radio ID to derive tunnel ID. */
+	uint16_t vap_id;	/**< VAP ID to derive tunnel ID. */
 };
 
 /**
- * @brief: GRE tunnel statistics sync message structure.
+ * nss_gre_redir_sjack_map_msg
+ *	Message information for adding an Ethernet interface-to-tunnel ID mapping.
+ */
+struct nss_gre_redir_sjack_map_msg {
+	uint32_t eth_nssif;			/**< NSS Ethernet interface number. */
+	uint32_t eth_id;			/**< Ethernet interface ID. */
+
+	/**
+	 * IPsec security association pattern. Pattern
+	 * 0x5A is supported only.
+	 */
+	uint8_t ipsec_pattern;
+};
+
+/**
+ * nss_gre_redir_sjack_unmap_msg
+ *	Message information for deleting an Ethernet interface-to-tunnel ID mapping.
+ */
+struct nss_gre_redir_sjack_unmap_msg {
+	uint32_t eth_nssif;	/**< NSS Ethernet interface number. */
+	uint32_t eth_id;	/**< Ethernet interface ID. */
+};
+
+/**
+ * nss_gre_redir_stats_sync_msg
+ *	Message information for synchronized GRE redirect statistics.
  */
 struct nss_gre_redir_stats_sync_msg {
-	struct nss_cmn_node_stats node_stats;	/**< Tunnel stats sync */
-	uint32_t tx_dropped;			/**< Tunnel Tx drops */
+	struct nss_cmn_node_stats node_stats;		/**< Common node statistics. */
+	uint32_t sjack_rx_packets;			/**< SJACK packet counter. */
+	uint32_t offl_rx_pkts[NSS_GRE_REDIR_MAX_RADIO];	/**< Offload packet counter. */
+	uint32_t encap_sg_alloc_drop;			/**< Encapsulation drop counters due to scatter gather buffer allocation failure. */
+	uint32_t decap_fail_drop;			/**< Decapsulation drop counters due to invalid IP header. */
+	uint32_t decap_split_drop;			/**< Decapsulation drop counters due to split flow processing. */
+	uint32_t split_sg_alloc_fail;			/**< Split processing fail counter due to scatter gather buffer allocation failure. */
+	uint32_t split_linear_copy_fail;		/**< Split processing fail counter due to linear copy fail. */
+	uint32_t split_not_enough_tailroom;		/**< Split processing fail counter due to insufficient tailroom. */
+	uint32_t exception_ds_invalid_dst_drop;		/**< Downstream exception handling fail counter due to invalid destination. */
+	uint32_t decap_eapol_frames;			/**< Decapsulation EAPoL frame counters. */
+	uint32_t exception_ds_inv_appid;		/**< Invalid application ID for the Tx completion packets on exception downstream node. */
+	uint32_t headroom_unavail;			/**< Packet headroom unavailable to write metadata. */
+	uint32_t tx_completion_success;			/**< Host enqueue success count for the Tx completion packets. */
+	uint32_t tx_completion_drop;			/**< Host enqueue drop count for the Tx completion packets. */
 };
 
 /**
- * @brief: GRE tunnel statistics as seen by HLOS.
+ * nss_gre_redir_tunnel_stats
+ *	GRE redirect statistics as seen by the HLOS.
  */
 struct nss_gre_redir_tunnel_stats {
-	int if_num;				/**< Tunnel Interface num */
-	bool valid;				/**< Tunnel validity flag */
-	struct nss_cmn_node_stats node_stats;	/**< Tunnel stats sync */
-	uint32_t tx_dropped;			/**< Tunnel Tx drops */
+	struct net_device *dev;				/**< Net device. */
+	struct nss_cmn_node_stats node_stats;		/**< Common node statistics. */
+	uint64_t tx_dropped;				/**< Dropped Tx packets. */
+	uint64_t sjack_rx_packets;			/**< SJACK Rx packet counter. */
+	uint64_t sjack_tx_packets;			/**< SJACK Tx packet counter. */
+	uint64_t offl_rx_pkts[NSS_GRE_REDIR_MAX_RADIO];	/**< Offload Rx packet counter per radio. */
+	uint64_t offl_tx_pkts[NSS_GRE_REDIR_MAX_RADIO];	/**< Offload Tx packet counter per radio. */
+	uint64_t exception_us_rx;			/**< Upstream exception Rx packet counter. */
+	uint64_t exception_us_tx;			/**< Upstream exception Tx packet counter. */
+	uint64_t exception_ds_rx;			/**< Downstream exception Rx packet counter. */
+	uint64_t exception_ds_tx;			/**< Downstream exception Tx packet counter. */
+	uint64_t encap_sg_alloc_drop;			/**< Encapsulation drop counters due to scatter gather buffer allocation failure. */
+	uint64_t decap_fail_drop;			/**< Decapsulation drop counters due to invalid IP header. */
+	uint64_t decap_split_drop;			/**< Decapsulation drop counters due to split flow processing. */
+	uint64_t split_sg_alloc_fail;			/**< Split processing fail counter due to scatter gather buffer allocation failure. */
+	uint64_t split_linear_copy_fail;		/**< Split processing fail counter due to linear copy fail. */
+	uint64_t split_not_enough_tailroom;		/**< Split processing fail counter due to insufficient tailroom. */
+	uint64_t exception_ds_invalid_dst_drop;		/**< Downstream exception handling fail counter due to invalid destination. */
+	uint64_t decap_eapol_frames;			/**< Decapsulation EAPoL frame counters. */
+	uint64_t exception_ds_inv_appid;		/**< Invalid application ID for the Tx completion packets on exception downstream node. */
+	uint64_t headroom_unavail;			/**< Packet headroom unavailable to write metadata. */
+	uint64_t tx_completion_success;			/**< Host enqueue success count for the Tx completion packets. */
+	uint64_t tx_completion_drop;			/**< Host enqueue drop count for the Tx completion packets. */
+	uint32_t ref_count;				/**< Reference count for statistics. */
 };
 
 /**
- * @brief Message structure to send/receive GRE tunnel message.
+ * nss_gre_redir_msg
+ *	Data for sending and receiving GRE tunnel redirect messages.
  */
 struct nss_gre_redir_msg {
-	struct nss_cmn_msg cm;          					/**< Message Header */
+	struct nss_cmn_msg cm;	/**< Common message header. */
+
+	/**
+	 * Payload of a GRE tunnel redirect message.
+	 */
 	union {
-		struct nss_gre_redir_configure_msg configure;			/**< msg: configure tunnel */
-		struct nss_gre_redir_interface_map_msg interface_map;		/**< msg: map tunnel id to if_num */
-		struct nss_gre_redir_interface_unmap_msg interface_unmap;	/**< msg: unmap interface mapping */
-		struct nss_gre_redir_stats_sync_msg stats_sync;			/**< msg: tunnel statistics sync */
-	} msg;
+		struct nss_gre_redir_inner_configure_msg inner_configure;
+				/**< Configure a GRE inner node. */
+		struct nss_gre_redir_outer_configure_msg outer_configure;
+				/**< Configure a GRE outer node. */
+		struct nss_gre_redir_interface_map_msg interface_map;
+				/**< Add a VAP interface-to-tunnel ID mapping. */
+		struct nss_gre_redir_interface_unmap_msg interface_unmap;
+				/**< Delete a VAP interafce-to-tunnel ID mapping. */
+		struct nss_gre_redir_sjack_map_msg sjack_map;
+				/**< Add an Ethernet interface-to-tunnel ID mapping for SJACK. */
+		struct nss_gre_redir_sjack_unmap_msg sjack_unmap;
+				/**< Delete an Ethernet interface-to-tunnel ID mapping for SJACK. */
+		struct nss_gre_redir_stats_sync_msg stats_sync;
+				/**< Synchronized tunnel statistics. */
+		struct nss_gre_redir_exception_ds_reg_cb_msg exception_ds_configure;
+				/**< Registering callback on VAP for the GRE downstream flows. */
+	} msg;			/**< Message payload for GRE redirect messages exchanged with NSS core. */
+
 };
 
 /**
- * @brief: HLOS -> NSS Per packet metadata information
+ * nss_gre_redir_encap_per_pkt_metadata
+ *	Metadata information for an HLOS-to-NSS packet.
  */
 struct nss_gre_redir_encap_per_pkt_metadata {
-	uint8_t dir;		/**< Direction in which packet is forwaded ( HLOS -> NSS) */
-	uint8_t gre_flags;	/**< GRE Flags */
-	uint8_t gre_prio;	/**< GRE Priority */
-	uint8_t gre_seq;	/**< Sequence Number */
-	uint16_t gre_tunnel_id;	/**< Tunnel ID */
-	uint8_t ip_dscp;	/**< DSCP values */
-	uint8_t ip_df_override;	/**< Override default DF policy Set bit 8 if override required for this packet.
-					Lower 7 bits provide DF value to be used for this packet. */
+	uint16_t gre_tunnel_id;			/**< ID of the tunnel. */
+	uint8_t gre_flags;			/**< Flags field from GRE header. */
+	uint8_t gre_prio;			/**< Priority field from GRE header. */
+	uint8_t gre_seq;			/**< Sequence number. */
+	uint8_t ip_dscp;			/**< DSCP values. */
+
+	/**
+	 * Override the default DF policy for the packet by setting bit 8.
+	 * The lower 7 bits provide the DF value to be used for this packet.
+	 */
+	uint8_t ip_df_override;
+
+	/**
+	 * IPsec security association pattern. Pattern
+	 * 0x5A is supported only.
+	 */
+	uint8_t ipsec_pattern;
 };
 
 /**
- * @brief: NSS -> HLOS Per packet metadata information
+ * nss_gre_redir_decap_per_pkt_metadata
+ *	Metadata information for an NSS-to-HLOS packet.
  */
 struct nss_gre_redir_decap_per_pkt_metadata {
-	uint8_t dir;		/**< Direction in which packet is forwarded ( NSS -> HLOS) */
-	uint8_t gre_flags;	/**< GRE Flags */
-	uint8_t gre_prio;	/**< GRE Priority */
-	uint8_t gre_seq;	/**< Sequence Number */
-	uint16_t gre_tunnel_id;	/**< Tunnel ID */
-	uint16_t src_if_num;	/**< Source ethernet interface number */
+	uint32_t src_if_num;    /**< Number of the source Ethernet interface. */
+	uint16_t gre_tunnel_id; /**< ID of the tunnel. */
+	uint8_t gre_flags;	/**< Flags from GRE header. */
+	uint8_t gre_prio;	/**< Priority from GRE header. */
+	uint8_t gre_seq;	/**< Sequence number. */
 };
 
 /**
- * @brief Callback to receive gre tunnel data
+ * nss_gre_redir_exception_us_metadata
+ *	Metadata information for upstream exception packet.
  *
- * @param app_data Application context of the message
- * @param os_buf Pointer to data buffer
+ * Note: Additional fields need to be added by customer as required.
+ */
+struct nss_gre_redir_exception_us_metadata {
+	uint8_t tid;		/**< TID value. */
+};
+
+/**
+ * nss_gre_redir_exception_ds_metadata
+ *	Metadata information for downstream exception packet.
  *
- * @return void
+ * Note: Additional fields need to be added by customer as required.
+ */
+struct nss_gre_redir_exception_ds_metadata {
+	uint32_t dst_vap_nssif;	/**< Destination VAP interface number. */
+	uint8_t tid;		/**< TID value. */
+	uint8_t app_id;		/**< Application ID. */
+	uint16_t hw_hash_idx;	/**< Hardware AST hash index value. */
+	uint32_t tx_status;	/**< Tx status. */
+};
+
+/**
+ * Callback function for receiving GRE tunnel data.
+ *
+ * @datatypes
+ * net_device \n
+ * sk_buff \n
+ * napi_struct
+ *
+ * @param[in] netdev  Pointer to the associated network device.
+ * @param[in] skb     Pointer to the data socket buffer.
+ * @param[in] napi    Pointer to the NAPI structure.
  */
 typedef void (*nss_gre_redir_data_callback_t)(struct net_device *netdev, struct sk_buff *skb, struct napi_struct *napi);
 
 /**
- * @brief Callback to receive gre tunnel messages
+ * Callback function for receiving GRE tunnel messages.
  *
- * @param app_data Application context of the message
- * @param msg Message data
+ * @datatypes
+ * nss_cmn_msg
  *
- * @return void
+ * @param[in] app_data  Pointer to the application context of the message.
+ * @param[in] msg       Pointer to the message data.
  */
 typedef void (*nss_gre_redir_msg_callback_t)(void *app_data, struct nss_cmn_msg *msg);
 
-/* @brief Register to send/receive gre tunnel messages to NSS
+/**
+ * nss_gre_redir_unregister_if
+ *	Deregisters a GRE tunnel interface from the NSS.
  *
- * @param if_num NSS interface number
- * @param netdev netdevice associated with the gre tunnel
- * @param cb_func_data Callback for gre tunnel data
- * @param cb_func_msg Callback for gre tunnel messages
- * @param features denote the skb types supported by this interface.
+ * @param[in] if_num  NSS interface number.
+. *
+ * @return
+ * None.
  *
- * @return NSS context
+ * @dependencies
+ * The tunnel interface must have been previously registered.
+ *
+ * @return
+ * True if successful, else false.
  */
-extern struct nss_ctx_instance *nss_gre_redir_register_if(uint32_t if_num, struct net_device *dev_ctx,
-							nss_gre_redir_data_callback_t cb_func_data,
-							nss_gre_redir_msg_callback_t cb_func_msg,
-							uint32_t features);
+extern bool nss_gre_redir_unregister_if(uint32_t if_num);
 
 /**
- * @brief Unregister gre tunnel interface with NSS
+ * nss_gre_redir_tx_msg
+ *	Sends GRE redirect tunnel messages.
  *
- * @param if_num NSS interface number
+ * @datatypes
+ * nss_ctx_instance \n
+ * nss_gre_redir_msg
  *
- * @return void
- */
-extern void nss_gre_redir_unregister_if(uint32_t if_num);
-
-/**
- * @brief  Send gre_redir Tunnel messages
+ * @param[in] nss_ctx  Pointer to the NSS context.
+ * @param[in] msg      Pointer to the message data.
  *
- * @param nss_ctx NSS context
- * @param msg GRE tunnel message
- *
- * @return Tx status
+ * @return
+ * Status of the Tx operation.
  */
 extern nss_tx_status_t nss_gre_redir_tx_msg(struct nss_ctx_instance *nss_ctx, struct nss_gre_redir_msg *msg);
 
 /**
- * @brief Send gre_redir Tunnel packet
+ * nss_gre_redir_tx_buf
+ *	Sends GRE redirect tunnel packets.
  *
- * @param nss_ctx NSS context
- * @param os_buf OS buffer (e.g. skbuff)
- * @param if_num GRE tunnel i/f number
+ * @datatypes
+ * nss_ctx_instance \n
+ * sk_buff
  *
- * @return Tx status
+ * @param[in] nss_ctx  Pointer to the NSS context.
+ * @param[in] os_buf   Pointer to the OS buffer (e.g., skbuff).
+ * @param[in] if_num   Tunnel interface number.
+ *
+ * @return
+ * Status of the Tx operation.
  */
 extern nss_tx_status_t nss_gre_redir_tx_buf(struct nss_ctx_instance *nss_ctx, struct sk_buff *os_buf,
-						uint32_t if_num);
+		uint32_t if_num);
 
 /**
- * @brief Get gre_redir tunnel statistics
+ * nss_gre_redir_tx_buf_noreuse
+ *	Sends GRE redirect tunnel packets.
  *
- * @param index index in tunnel stats array.
- * @param stats tunnel stats structure.
+ * Note: The buffers will be not be reused or
+ * kept in the accelerator.
  *
- * @return true or false.
+ * @datatypes
+ * nss_ctx_instance \n
+ * sk_buff
+ *
+ * @param[in] nss_ctx  Pointer to the NSS context.
+ * @param[in] os_buf   Pointer to the OS buffer (e.g., skbuff).
+ * @param[in] if_num   Tunnel interface number.
+ *
+ * @return
+ * Status of the Tx operation.
+ */
+extern nss_tx_status_t nss_gre_redir_tx_buf_noreuse(struct nss_ctx_instance *nss_ctx, struct sk_buff *os_buf,
+			uint32_t if_num);
+
+/**
+ * nss_gre_redir_get_stats
+ *	Gets GRE redirect tunnel statistics.
+ *
+ * @datatypes
+ * nss_gre_redir_tunnel_stats
+ *
+ * @param[in]  index  Index in the tunnel statistics array.
+ * @param[out] stats  Pointer to the tunnel statistics.
+ *
+ * @return
+ * TRUE or FALSE.
  */
 extern bool nss_gre_redir_get_stats(int index, struct nss_gre_redir_tunnel_stats *stats);
+
+/**
+ * nss_gre_redir_alloc_and_register_node
+ *	Allocates and registers GRE redirect dynamic node with NSS.
+ *
+ * @datatypes
+ * net_device \n
+ * nss_gre_redir_data_callback_t \n
+ * nss_gre_redir_msg_callback_t \n
+ *
+ * @param[in] dev      Pointer to the associated network device.
+ * @param[in] data_cb  Callback for the data.
+ * @param[in] msg_cb   Callback for the message.
+ * @param[in] type     Type of dynamic node.
+ * @param[in] app_ctx  Application context for notify callback.
+ *
+ * @return
+ * NSS interface number allocated.
+ */
+extern int nss_gre_redir_alloc_and_register_node(struct net_device *dev,
+		nss_gre_redir_data_callback_t data_cb,
+		nss_gre_redir_msg_callback_t msg_cb,
+		uint32_t type, void *app_ctx);
+
+/**
+ * nss_gre_redir_configure_inner_node
+ *	Configures inner GRE redirect node.
+ *
+ * @datatypes
+ * nss_gre_redir_inner_configure_msg
+ *
+ * @param[in] ifnum              NSS interface number.
+ * @param[in] ngrcm              Inner node configuration message.
+ *
+ * @return
+ * Status of Tx operation.
+ */
+extern nss_tx_status_t nss_gre_redir_configure_inner_node(int ifnum,
+		struct nss_gre_redir_inner_configure_msg *ngrcm);
+
+/**
+ * nss_gre_redir_configure_outer_node
+ *	Configures outer GRE redirect node.
+ *
+ * @datatypes
+ * nss_gre_redir_outer_configure_msg
+ *
+ * @param[in] ifnum              NSS interface number.
+ * @param[in] ngrcm              Outer node configuration message.
+ *
+ * @return
+ * Status of Tx operation.
+ */
+extern nss_tx_status_t nss_gre_redir_configure_outer_node(int ifnum,
+		struct nss_gre_redir_outer_configure_msg *ngrcm);
+
+/**
+ * nss_gre_redir_exception_ds_reg_cb
+ *	Configure a callback on VAP for downstream GRE exception flows.
+ *
+ * @datatypes
+ * nss_gre_redir_exception_ds_reg_cb_msg
+ *
+ * @param[in] ifnum              NSS interface number.
+ * @param[in] ngrcm              Downstream exception callback registration message.
+ *
+ * @return
+ * Status of Tx operation.
+ */
+extern nss_tx_status_t nss_gre_redir_exception_ds_reg_cb(int ifnum,
+		struct nss_gre_redir_exception_ds_reg_cb_msg *ngrcm);
+
+/**
+ * nss_gre_redir_tx_msg_sync
+ *	Sends messages to NSS firmware synchronously.
+ *
+ * @datatypes
+ * nss_ctx_instance \n
+ * nss_gre_redir_msg
+ *
+ * @param[in] nss_ctx  NSS core context.
+ * @param[in] ngrm     Pointer to GRE redirect message data.
+ *
+ * @return
+ * Status of Tx operation.
+ */
+extern nss_tx_status_t nss_gre_redir_tx_msg_sync(struct nss_ctx_instance *nss_ctx, struct nss_gre_redir_msg *ngrm);
+
+/**
+ * nss_gre_redir_get_context
+ *	Gets the GRE redirect context.
+ *
+ * @return
+ * Pointer to the NSS core context.
+ */
+extern struct nss_ctx_instance *nss_gre_redir_get_context(void);
+
+/**
+ * nss_gre_redir_get_dentry
+ *	Returns directory entry created in debugfs for statistics.
+ *
+ * @return
+ * Pointer to created directory entry for GRE redirect.
+ */
+extern struct dentry *nss_gre_redir_get_dentry(void);
+
+/**
+ * nss_gre_redir_get_device
+ *	Gets the original device from probe.
+ *
+ * @return
+ * Pointer to the device.
+ */
+extern struct device *nss_gre_redir_get_device(void);
+
+/**
+ * @}
+ */
 
 #endif /* __NSS_GRE_REDIR_H */

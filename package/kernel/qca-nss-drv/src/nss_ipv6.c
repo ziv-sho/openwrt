@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -18,8 +18,10 @@
  * nss_ipv6.c
  *	NSS IPv6 APIs
  */
-#include "nss_tx_rx_common.h"
+#include <nss_core.h>
 #include "nss_dscp_map.h"
+#include "nss_ipv6_stats.h"
+#include "nss_ipv6_strings.h"
 
 #define NSS_IPV6_TX_MSG_TIMEOUT 1000	/* 1 sec timeout for IPv6 messages */
 
@@ -45,7 +47,7 @@ struct nss_ipv6_conn_table_info {
 } nss_ipv6_ct_info;
 
 int nss_ipv6_conn_cfg = NSS_DEFAULT_NUM_CONN;
-int nss_ipv6_accel_mode_cfg __read_mostly;
+int nss_ipv6_accel_mode_cfg __read_mostly = 1;
 
 static struct nss_dscp_map_entry mapping[NSS_DSCP_MAP_ARRAY_SIZE];
 
@@ -53,16 +55,6 @@ static struct nss_dscp_map_entry mapping[NSS_DSCP_MAP_ARRAY_SIZE];
  * Callback for conn_sync_many request message.
  */
 nss_ipv6_msg_callback_t nss_ipv6_conn_sync_many_msg_cb = NULL;
-
-/*
- * nss_ipv6_max_conn_count()
- *	Return the maximum number of IPv6 connections that the NSS acceleration engine supports.
- */
-int nss_ipv6_max_conn_count(void)
-{
-	return nss_ipv6_conn_cfg;
-}
-EXPORT_SYMBOL(nss_ipv6_max_conn_count);
 
 /*
  * nss_ipv6_dscp_map_usage()
@@ -75,89 +67,6 @@ static inline void nss_ipv6_dscp_map_usage(void)
 	nss_info_always("dscp[0-63] action[0-%u] prio[0-%u]:\n\n",
 				NSS_IPV6_DSCP_MAP_ACTION_MAX - 1,
 				NSS_DSCP_MAP_PRIORITY_MAX - 1);
-}
-
-/*
- * nss_ipv6_driver_conn_sync_update()
- *	Update driver specific information from the messsage.
- */
-static void nss_ipv6_driver_conn_sync_update(struct nss_ctx_instance *nss_ctx, struct nss_ipv6_conn_sync *nics)
-{
-	struct nss_top_instance *nss_top = nss_ctx->nss_top;
-
-	/*
-	 * Update statistics maintained by NSS driver
-	 */
-	spin_lock_bh(&nss_top->stats_lock);
-	nss_top->stats_ipv6[NSS_STATS_IPV6_ACCELERATED_RX_PKTS] += nics->flow_rx_packet_count + nics->return_rx_packet_count;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_ACCELERATED_RX_BYTES] += nics->flow_rx_byte_count + nics->return_rx_byte_count;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_ACCELERATED_TX_PKTS] += nics->flow_tx_packet_count + nics->return_tx_packet_count;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_ACCELERATED_TX_BYTES] += nics->flow_tx_byte_count + nics->return_tx_byte_count;
-	spin_unlock_bh(&nss_top->stats_lock);
-}
-
-/*
- * nss_ipv6_driver_conn_sync_many_update()
- *	Update driver specific information from the conn_sync_many messsage.
- */
-static void nss_ipv6_driver_conn_sync_many_update(struct nss_ctx_instance *nss_ctx, struct nss_ipv6_conn_sync_many_msg *nicsm)
-{
-	uint32_t i;
-
-	/*
-	 * Sanity check for the stats count
-	 */
-	if (nicsm->count * sizeof(struct nss_ipv6_conn_sync) >= nicsm->size) {
-		nss_warning("%p: stats sync count %u exceeds the size of this msg %u", nss_ctx, nicsm->count, nicsm->size);
-		return;
-	}
-
-	for (i = 0; i < nicsm->count; i++) {
-		nss_ipv6_driver_conn_sync_update(nss_ctx, &nicsm->conn_sync[i]);
-	}
-}
-
-/*
- * nss_ipv6_driver_node_sync_update)
- *	Update driver specific information from the messsage.
- */
-static void nss_ipv6_driver_node_sync_update(struct nss_ctx_instance *nss_ctx, struct nss_ipv6_node_sync *nins)
-{
-	struct nss_top_instance *nss_top = nss_ctx->nss_top;
-	uint32_t i;
-
-	/*
-	 * Update statistics maintained by NSS driver
-	 */
-	spin_lock_bh(&nss_top->stats_lock);
-	nss_top->stats_node[NSS_IPV6_RX_INTERFACE][NSS_STATS_NODE_RX_PKTS] += nins->node_stats.rx_packets;
-	nss_top->stats_node[NSS_IPV6_RX_INTERFACE][NSS_STATS_NODE_RX_BYTES] += nins->node_stats.rx_bytes;
-	nss_top->stats_node[NSS_IPV6_RX_INTERFACE][NSS_STATS_NODE_RX_DROPPED] += nins->node_stats.rx_dropped;
-	nss_top->stats_node[NSS_IPV6_RX_INTERFACE][NSS_STATS_NODE_TX_PKTS] += nins->node_stats.tx_packets;
-	nss_top->stats_node[NSS_IPV6_RX_INTERFACE][NSS_STATS_NODE_TX_BYTES] += nins->node_stats.tx_bytes;
-
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_CREATE_REQUESTS] += nins->ipv6_connection_create_requests;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_CREATE_COLLISIONS] += nins->ipv6_connection_create_collisions;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_CREATE_INVALID_INTERFACE] += nins->ipv6_connection_create_invalid_interface;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_DESTROY_REQUESTS] += nins->ipv6_connection_destroy_requests;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_DESTROY_MISSES] += nins->ipv6_connection_destroy_misses;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_HASH_HITS] += nins->ipv6_connection_hash_hits;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_HASH_REORDERS] += nins->ipv6_connection_hash_reorders;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_FLUSHES] += nins->ipv6_connection_flushes;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_CONNECTION_EVICTIONS] += nins->ipv6_connection_evictions;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_FRAGMENTATIONS] += nins->ipv6_fragmentations;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_FRAG_FAILS] += nins->ipv6_frag_fails;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_MC_CONNECTION_CREATE_REQUESTS] += nins->ipv6_mc_connection_create_requests;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_MC_CONNECTION_UPDATE_REQUESTS] += nins->ipv6_mc_connection_update_requests;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_MC_CONNECTION_CREATE_INVALID_INTERFACE] += nins->ipv6_mc_connection_create_invalid_interface;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_MC_CONNECTION_DESTROY_REQUESTS] += nins->ipv6_mc_connection_destroy_requests;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_MC_CONNECTION_DESTROY_MISSES] += nins->ipv6_mc_connection_destroy_misses;
-	nss_top->stats_ipv6[NSS_STATS_IPV6_MC_CONNECTION_FLUSHES] += nins->ipv6_mc_connection_flushes;
-
-	for (i = 0; i < NSS_EXCEPTION_EVENT_IPV6_MAX; i++) {
-		 nss_top->stats_if_exception_ipv6[i] += nins->exception_events[i];
-	}
-	spin_unlock_bh(&nss_top->stats_lock);
 }
 
 /*
@@ -195,23 +104,24 @@ static void nss_ipv6_rx_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss
 	switch (nim->cm.type) {
 	case NSS_IPV6_RX_NODE_STATS_SYNC_MSG:
 		/*
-		* Update driver statistics on node sync.
+		* Update driver statistics on node sync and send statistics notifications to the registered modules.
 		*/
-		nss_ipv6_driver_node_sync_update(nss_ctx, &nim->msg.node_stats);
+		nss_ipv6_stats_node_sync(nss_ctx, &nim->msg.node_stats);
+		nss_ipv6_stats_notify(nss_ctx);
 		break;
 
 	case NSS_IPV6_RX_CONN_STATS_SYNC_MSG:
 		/*
 		 * Update driver statistics on connection sync.
 		 */
-		nss_ipv6_driver_conn_sync_update(nss_ctx, &nim->msg.conn_stats);
+		nss_ipv6_stats_conn_sync(nss_ctx, &nim->msg.conn_stats);
 		break;
 
 	case NSS_IPV6_TX_CONN_STATS_SYNC_MANY_MSG:
 		/*
 		 * Update driver statistics on connection sync many.
 		 */
-		nss_ipv6_driver_conn_sync_many_update(nss_ctx, &nim->msg.conn_stats_many);
+		nss_ipv6_stats_conn_sync_many(nss_ctx, &nim->msg.conn_stats_many);
 		ncm->cb = (nss_ptr_t)nss_ipv6_conn_sync_many_msg_cb;
 		break;
 	}
@@ -220,7 +130,7 @@ static void nss_ipv6_rx_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss
 	 * Update the callback and app_data for NOTIFY messages, IPv6 sends all notify messages
 	 * to the same callback/app_data.
 	 */
-	if (nim->cm.response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (nim->cm.response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = (nss_ptr_t)nss_ctx->nss_top->ipv6_callback;
 		ncm->app_data = (nss_ptr_t)nss_ctx->nss_top->ipv6_ctx;
 	}
@@ -281,21 +191,53 @@ enum nss_ipv6_dscp_map_actions nss_ipv6_dscp_action_get(uint8_t dscp)
 EXPORT_SYMBOL(nss_ipv6_dscp_action_get);
 
 /*
+ * nss_ipv6_max_conn_count()
+ *	Return the maximum number of IPv6 connections that the NSS acceleration engine supports.
+ */
+int nss_ipv6_max_conn_count(void)
+{
+	return nss_ipv6_conn_cfg;
+}
+EXPORT_SYMBOL(nss_ipv6_max_conn_count);
+
+/*
+ * nss_ipv6_conn_inquiry()
+ *	Inquiry if a connection has been established in NSS FW
+ */
+nss_tx_status_t nss_ipv6_conn_inquiry(struct nss_ipv6_5tuple *ipv6_5t_p,
+				nss_ipv6_msg_callback_t cb)
+{
+	nss_tx_status_t nss_tx_status;
+	struct nss_ipv6_msg nim;
+	struct nss_ctx_instance *nss_ctx = &nss_top_main.nss[0];
+
+	/*
+	 * Initialize inquiry message structure.
+	 * This is async message and the result will be returned
+	 * to the caller by the msg_callback passed in.
+	 */
+	memset(&nim, 0, sizeof(nim));
+	nss_ipv6_msg_init(&nim, NSS_IPV6_RX_INTERFACE,
+			NSS_IPV6_TX_CONN_CFG_INQUIRY_MSG,
+			sizeof(struct nss_ipv6_inquiry_msg),
+			cb, NULL);
+	nim.msg.inquiry.rr.tuple = *ipv6_5t_p;
+	nss_tx_status = nss_ipv6_tx(nss_ctx, &nim);
+	if (nss_tx_status != NSS_TX_SUCCESS) {
+		nss_warning("%p: Send inquiry message failed\n", ipv6_5t_p);
+	}
+
+	return nss_tx_status;
+}
+EXPORT_SYMBOL(nss_ipv6_conn_inquiry);
+
+/*
  * nss_ipv6_tx_with_size()
  *	Transmit an ipv6 message to the FW with a specified size.
  */
 nss_tx_status_t nss_ipv6_tx_with_size(struct nss_ctx_instance *nss_ctx, struct nss_ipv6_msg *nim, uint32_t size)
 {
-	struct nss_ipv6_msg *nim2;
 	struct nss_cmn_msg *ncm = &nim->cm;
-	struct sk_buff *nbuf;
-	int32_t status;
-
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: ipv6 msg dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
 
 	/*
 	 * Sanity check the message
@@ -310,45 +252,12 @@ nss_tx_status_t nss_ipv6_tx_with_size(struct nss_ctx_instance *nss_ctx, struct n
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_ipv6_msg)) {
-		nss_warning("%p: message length is invalid: %d", nss_ctx, nss_cmn_get_msg_len(ncm));
-		return NSS_TX_FAILURE;
-	}
-
-	if(size > PAGE_SIZE) {
-		nss_warning("%p: tx request size too large: %u", nss_ctx, size);
-		return NSS_TX_FAILURE;
-	}
-
-	nbuf = dev_alloc_skb(size);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: msg dropped as command allocation failed", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	/*
-	 * Copy the message to our skb.
-	 */
-	nim2 = (struct nss_ipv6_msg *)skb_put(nbuf, size);
-	memcpy(nim2, nim, sizeof(struct nss_ipv6_msg));
-
 	/*
 	 * Trace messages.
 	 */
 	nss_ipv6_log_tx_msg(nim);
 
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: Unable to enqueue 'Destroy IPv6' rule\n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_CMD_REQ]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, nim, sizeof(*nim), size);
 }
 EXPORT_SYMBOL(nss_ipv6_tx_with_size);
 
@@ -470,9 +379,14 @@ EXPORT_SYMBOL(nss_ipv6_get_mgr);
  */
 void nss_ipv6_register_handler()
 {
-	if (nss_core_register_handler(NSS_IPV6_RX_INTERFACE, nss_ipv6_rx_msg_handler, NULL) != NSS_CORE_STATUS_SUCCESS) {
+	struct nss_ctx_instance *nss_ctx = nss_ipv6_get_mgr();
+
+	if (nss_core_register_handler(nss_ctx, NSS_IPV6_RX_INTERFACE, nss_ipv6_rx_msg_handler, NULL) != NSS_CORE_STATUS_SUCCESS) {
 		nss_warning("IPv6 handler failed to register");
 	}
+
+	nss_ipv6_stats_dentry_create();
+	nss_ipv6_strings_dentry_create();
 }
 
 /*
@@ -486,14 +400,14 @@ static void nss_ipv6_conn_cfg_process_callback(void *app_data, struct nss_ipv6_m
 
 	if (nim->cm.response != NSS_CMN_RESPONSE_ACK) {
 		nss_warning("%p: IPv6 connection configuration failed with error: %d\n", nss_ctx, nim->cm.error);
-		nss_core_update_max_ipv6_conn(NSS_DEFAULT_NUM_CONN);
+		nss_core_update_max_ipv6_conn(NSS_FW_DEFAULT_NUM_CONN);
 		nss_ipv6_free_conn_tables();
 		return;
 	}
 
 	nss_ipv6_conn_cfg = ntohl(nirccm->num_conn);
 
-	nss_warning("%p: IPv6 connection configuration success: %d\n", nss_ctx, nim->cm.error);
+	nss_info("%p: IPv6 connection configuration success: %d\n", nss_ctx, nim->cm.error);
 }
 
 /*
@@ -522,7 +436,7 @@ static int nss_ipv6_conn_cfg_process(struct nss_ctx_instance *nss_ctx, int conn)
 							conn);
 		goto fail;
 	}
-	nss_warning("%p: CE Memory allocated for IPv6 Connections: %d\n",
+	nss_info("%p: CE Memory allocated for IPv6 Connections: %d\n",
 							nss_ctx,
 							conn);
 
@@ -534,7 +448,7 @@ static int nss_ipv6_conn_cfg_process(struct nss_ctx_instance *nss_ctx, int conn)
 							conn);
 		goto fail;
 	}
-	nss_warning("%p: CME Memory allocated for IPv6 Connections: %d\n",
+	nss_info("%p: CME Memory allocated for IPv6 Connections: %d\n",
 							nss_ctx,
 							conn);
 
@@ -544,8 +458,17 @@ static int nss_ipv6_conn_cfg_process(struct nss_ctx_instance *nss_ctx, int conn)
 
 	nirccm = &nim.msg.rule_conn_cfg;
 	nirccm->num_conn = htonl(conn);
-	nirccm->ce_mem = (nss_ptr_t)dma_map_single(NULL, (void *)nss_ipv6_ct_info.ce_mem, nss_ipv6_ct_info.ce_table_size, DMA_TO_DEVICE);
-	nirccm->cme_mem = (nss_ptr_t)dma_map_single(NULL, (void *)nss_ipv6_ct_info.cme_mem, nss_ipv6_ct_info.cme_table_size, DMA_TO_DEVICE);
+	nirccm->ce_mem = dma_map_single(nss_ctx->dev, (void *)nss_ipv6_ct_info.ce_mem, nss_ipv6_ct_info.ce_table_size, DMA_TO_DEVICE);
+	if (unlikely(dma_mapping_error(nss_ctx->dev, nirccm->ce_mem))) {
+		nss_warning("%p: DMA mapping failed for virtual address = %p", nss_ctx, (void *)nss_ipv6_ct_info.ce_mem);
+		goto fail;
+	}
+
+	nirccm->cme_mem = dma_map_single(nss_ctx->dev, (void *)nss_ipv6_ct_info.cme_mem, nss_ipv6_ct_info.cme_table_size, DMA_TO_DEVICE);
+	if (unlikely(dma_mapping_error(nss_ctx->dev, nirccm->cme_mem))) {
+		nss_warning("%p: DMA mapping failed for virtual address = %p", nss_ctx, (void *)nss_ipv6_ct_info.cme_mem);
+		goto fail;
+	}
 
 	nss_tx_status = nss_ipv6_tx(nss_ctx, &nim);
 	if (nss_tx_status != NSS_TX_SUCCESS) {
@@ -573,7 +496,7 @@ static void nss_ipv6_update_conn_count_callback(void *app_data, struct nss_ipv6_
 
 	if (nim->cm.response != NSS_CMN_RESPONSE_ACK) {
 		nss_warning("%p: IPv6 fetch connection info failed with error: %d\n", nss_ctx, nim->cm.error);
-		nss_core_update_max_ipv6_conn(NSS_DEFAULT_NUM_CONN);
+		nss_core_update_max_ipv6_conn(NSS_FW_DEFAULT_NUM_CONN);
 		return;
 	}
 
@@ -608,7 +531,7 @@ int nss_ipv6_update_conn_count(int ipv6_num_conn)
 	/*
 	 * By default, NSS FW is configured with default number of connections.
 	 */
-	if (ipv6_num_conn == NSS_DEFAULT_NUM_CONN) {
+	if (ipv6_num_conn == NSS_FW_DEFAULT_NUM_CONN) {
 		nss_info("%p: Default number of connections (%d) already configured\n", nss_ctx, ipv6_num_conn);
 		return 0;
 	}
@@ -626,7 +549,7 @@ int nss_ipv6_update_conn_count(int ipv6_num_conn)
 		(ipv6_num_conn < NSS_MIN_NUM_CONN)) {
 		nss_warning("%p: input supported connections (%d) does not adhere\
 				specifications\n1) not power of 2,\n2) is less than \
-				min val: %d, OR\n 	IPv4/6 total exceeds %d\n",
+				min val: %d, OR\n	IPv4/6 total exceeds %d\n",
 				nss_ctx,
 				ipv6_num_conn,
 				NSS_MIN_NUM_CONN,

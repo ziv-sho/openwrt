@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -20,6 +20,10 @@
  */
 
 #include "nss_tx_rx_common.h"
+#include "nss_tstamp.h"
+#if defined(NSS_HAL_IPQ807x_SUPPORT) || defined(NSS_HAL_IPQ60XX_SUPPORT)
+#include <nss_dp_api_if.h>
+#endif
 
 #define NSS_PHYS_IF_TX_TIMEOUT 3000 /* 3 Seconds */
 
@@ -51,11 +55,11 @@ static void nss_phys_if_update_driver_stats(struct nss_ctx_instance *nss_ctx, ui
 	uint64_t *top_stats = &(nss_top->stats_gmac[id][0]);
 
 	spin_lock_bh(&nss_top->stats_lock);
-	top_stats[NSS_STATS_GMAC_TOTAL_TICKS] += stats->estats.gmac_total_ticks;
-	if (unlikely(top_stats[NSS_STATS_GMAC_WORST_CASE_TICKS] < stats->estats.gmac_worst_case_ticks)) {
-		top_stats[NSS_STATS_GMAC_WORST_CASE_TICKS] = stats->estats.gmac_worst_case_ticks;
+	top_stats[NSS_GMAC_STATS_TOTAL_TICKS] += stats->estats.gmac_total_ticks;
+	if (unlikely(top_stats[NSS_GMAC_STATS_WORST_CASE_TICKS] < stats->estats.gmac_worst_case_ticks)) {
+		top_stats[NSS_GMAC_STATS_WORST_CASE_TICKS] = stats->estats.gmac_worst_case_ticks;
 	}
-	top_stats[NSS_STATS_GMAC_ITERATIONS] += stats->estats.gmac_iterations;
+	top_stats[NSS_GMAC_STATS_ITERATIONS] += stats->estats.gmac_iterations;
 	spin_unlock_bh(&nss_top->stats_lock);
 }
 
@@ -116,7 +120,7 @@ static void nss_phys_if_msg_handler(struct nss_ctx_instance *nss_ctx, struct nss
 	 * Update the callback and app_data for NOTIFY messages, IPv4 sends all notify messages
 	 * to the same callback/app_data.
 	 */
-	if (ncm->response == NSS_CMM_RESPONSE_NOTIFY) {
+	if (ncm->response == NSS_CMN_RESPONSE_NOTIFY) {
 		ncm->cb = (nss_ptr_t)nss_ctx->nss_top->phys_if_msg_callback[ncm->interface];
 		ncm->app_data = (nss_ptr_t)nss_ctx->subsys_dp_register[ncm->interface].ndev;
 	}
@@ -158,39 +162,22 @@ static void nss_phys_if_callback(void *app_data, struct nss_phys_if_msg *nim)
  */
 nss_tx_status_t nss_phys_if_buf(struct nss_ctx_instance *nss_ctx, struct sk_buff *os_buf, uint32_t if_num)
 {
-	int32_t status;
-	uint16_t flags = 0;
-
 	nss_trace("%p: Phys If Tx packet, id:%d, data=%p", nss_ctx, if_num, os_buf->data);
 
-	NSS_VERIFY_CTX_MAGIC(nss_ctx);
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("%p: 'Phys If Tx' packet dropped as core not ready", nss_ctx);
-		return NSS_TX_FAILURE_NOT_READY;
-	}
-
-	/* Check if we need the packet to be timestamped by GMAC Hardware at Tx */
-	if (unlikely(skb_shinfo(os_buf)->tx_flags & SKBTX_HW_TSTAMP)) {
-		flags |= H2N_BIT_FLAG_TX_TS_REQUIRED;
-	}
-
-	status = nss_core_send_buffer(nss_ctx, if_num, os_buf, NSS_IF_DATA_QUEUE_0, H2N_BUFFER_PACKET, flags);
-	if (unlikely(status != NSS_CORE_STATUS_SUCCESS)) {
-		nss_warning("%p: Unable to enqueue 'Phys If Tx' packet\n", nss_ctx);
-		if (status == NSS_CORE_STATUS_FAILURE_QUEUE) {
-			return NSS_TX_FAILURE_QUEUE;
-		}
-
-		return NSS_TX_FAILURE;
-	}
-
 	/*
-	 * Kick the NSS awake so it can process our new entry.
+	 * If we need the packet to be timestamped by GMAC Hardware at Tx
+	 * send the packet to tstamp NSS module
 	 */
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
+	if (unlikely(skb_shinfo(os_buf)->tx_flags & SKBTX_HW_TSTAMP)) {
+		/* try PHY Driver hook for transmit timestamping firstly */
+#if defined(NSS_HAL_IPQ807x_SUPPORT) || defined(NSS_HAL_IPQ60XX_SUPPORT)
+		nss_phy_tstamp_tx_buf(os_buf->dev, os_buf);
+#endif
+		if (!(skb_shinfo(os_buf)->tx_flags & SKBTX_IN_PROGRESS))
+			return nss_tstamp_tx_buf(nss_ctx, os_buf, if_num);
+	}
 
-	NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_TX_PACKET]);
-	return NSS_TX_SUCCESS;
+	return nss_core_send_packet(nss_ctx, os_buf, if_num, H2N_BIT_FLAG_BUFFER_REUSABLE);
 }
 
 /*
@@ -199,16 +186,9 @@ nss_tx_status_t nss_phys_if_buf(struct nss_ctx_instance *nss_ctx, struct sk_buff
 nss_tx_status_t nss_phys_if_msg(struct nss_ctx_instance *nss_ctx, struct nss_phys_if_msg *nim)
 {
 	struct nss_cmn_msg *ncm = &nim->cm;
-	struct nss_phys_if_msg *nim2;
 	struct net_device *dev;
-	struct sk_buff *nbuf;
-	uint32_t if_num;
-	int32_t status;
 
-	if (unlikely(nss_ctx->state != NSS_CORE_STATE_INITIALIZED)) {
-		nss_warning("Interface could not be created as core not ready");
-		return NSS_TX_FAILURE;
-	}
+	NSS_VERIFY_CTX_MAGIC(nss_ctx);
 
 	/*
 	 * Sanity check the message
@@ -223,38 +203,13 @@ nss_tx_status_t nss_phys_if_msg(struct nss_ctx_instance *nss_ctx, struct nss_phy
 		return NSS_TX_FAILURE;
 	}
 
-	if (nss_cmn_get_msg_len(ncm) > sizeof(struct nss_phys_if_msg)) {
-		nss_warning("%p: invalid length: %d", nss_ctx, nss_cmn_get_msg_len(ncm));
-		return NSS_TX_FAILURE;
-	}
-
-	if_num = ncm->interface;
-	dev = nss_ctx->subsys_dp_register[if_num].ndev;
+	dev = nss_ctx->subsys_dp_register[ncm->interface].ndev;
 	if (!dev) {
-		nss_warning("%p: Unregister physical interface %d: no context", nss_ctx, if_num);
+		nss_warning("%p: Unregister physical interface %d: no context", nss_ctx, ncm->interface);
 		return NSS_TX_FAILURE_BAD_PARAM;
 	}
 
-	nbuf = dev_alloc_skb(NSS_NBUF_PAYLOAD_SIZE);
-	if (unlikely(!nbuf)) {
-		NSS_PKT_STATS_INCREMENT(nss_ctx, &nss_ctx->nss_top->stats_drv[NSS_STATS_DRV_NBUF_ALLOC_FAILS]);
-		nss_warning("%p: physical interface %p: command allocation failed", nss_ctx, dev);
-		return NSS_TX_FAILURE;
-	}
-
-	nim2 = (struct nss_phys_if_msg *)skb_put(nbuf, sizeof(struct nss_phys_if_msg));
-	memcpy(nim2, nim, sizeof(struct nss_phys_if_msg));
-
-	status = nss_core_send_buffer(nss_ctx, 0, nbuf, NSS_IF_CMD_QUEUE, H2N_BUFFER_CTRL, 0);
-	if (status != NSS_CORE_STATUS_SUCCESS) {
-		dev_kfree_skb_any(nbuf);
-		nss_warning("%p: Unable to enqueue 'physical interface' command\n", nss_ctx);
-		return NSS_TX_FAILURE;
-	}
-
-	nss_hal_send_interrupt(nss_ctx, NSS_H2N_INTR_DATA_COMMAND_QUEUE);
-
-	return NSS_TX_SUCCESS;
+	return nss_core_send_cmd(nss_ctx, nim, sizeof(*nim), NSS_NBUF_PAYLOAD_SIZE);
 }
 
 /*
@@ -311,10 +266,7 @@ struct nss_ctx_instance *nss_phys_if_register(uint32_t if_num,
 	nss_assert(nss_ctx);
 	nss_assert(if_num <= NSS_MAX_PHYSICAL_INTERFACES);
 
-	nss_ctx->subsys_dp_register[if_num].ndev = netdev;
-	nss_ctx->subsys_dp_register[if_num].cb = rx_callback;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = features;
+	nss_core_register_subsys_dp(nss_ctx, if_num, rx_callback, NULL, NULL, netdev, features);
 
 	nss_top_main.phys_if_msg_callback[if_num] = msg_callback;
 
@@ -333,10 +285,7 @@ void nss_phys_if_unregister(uint32_t if_num)
 	nss_assert(nss_ctx);
 	nss_assert(if_num < NSS_MAX_PHYSICAL_INTERFACES);
 
-	nss_ctx->subsys_dp_register[if_num].ndev = NULL;
-	nss_ctx->subsys_dp_register[if_num].cb = NULL;
-	nss_ctx->subsys_dp_register[if_num].app_data = NULL;
-	nss_ctx->subsys_dp_register[if_num].features = 0;
+	nss_core_unregister_subsys_dp(nss_ctx, if_num);
 
 	nss_top_main.phys_if_msg_callback[if_num] = NULL;
 
@@ -347,11 +296,11 @@ void nss_phys_if_unregister(uint32_t if_num)
 /*
  * nss_phys_if_register_handler()
  */
-void nss_phys_if_register_handler(uint32_t if_num)
+void nss_phys_if_register_handler(struct nss_ctx_instance *nss_ctx, uint32_t if_num)
 {
 	uint32_t ret;
 
-	ret = nss_core_register_handler(if_num, nss_phys_if_msg_handler, NULL);
+	ret = nss_core_register_handler(nss_ctx, if_num, nss_phys_if_msg_handler, NULL);
 
 	if (ret != NSS_CORE_STATUS_SUCCESS) {
 		nss_warning("Message handler FAILED to be registered for interface %d", if_num);
@@ -480,6 +429,15 @@ nss_tx_status_t nss_phys_if_change_mtu(struct nss_ctx_instance *nss_ctx, uint32_
 	int i;
 	nss_tx_status_t status;
 
+/*
+ * We disallow MTU changes for low memory profiles in order to keep the buffer size constant
+ */
+#ifdef NSS_FIXED_BUFFER_SIZE
+	if (mtu > ETH_DATA_LEN) {
+		nss_info_always("MTU change beyond 1500 restricted for low memory profile \n");
+		return NSS_TX_FAILURE;
+	}
+#endif
 	NSS_VERIFY_CTX_MAGIC(nss_ctx);
 	nss_info("%p: Phys If Change MTU, id:%d, mtu=%d\n", nss_ctx, if_num, mtu);
 
@@ -511,6 +469,14 @@ nss_tx_status_t nss_phys_if_change_mtu(struct nss_ctx_instance *nss_ctx, uint32_
 	}
 
 	mtu_sz = nss_top_main.data_plane_ops->data_plane_get_mtu_sz(max_mtu);
+
+/*
+ * We need to ensure the max_buf_size for 256MB profile stays
+ * constant at NSS_EMPTY_BUFFER_SIZE. We do this by disallowing changes
+ * to it due to MTU changes. Also, NSS_EMPTY_BUFFER_SIZE includes the
+ * PAD and ETH_HLEN, and is aligned to SMP_CACHE_BYTES
+ */
+#ifndef NSS_FIXED_BUFFER_SIZE
 	nss_ctx->max_buf_size = ((mtu_sz + ETH_HLEN + SMP_CACHE_BYTES - 1) & ~(SMP_CACHE_BYTES - 1)) + NSS_NBUF_ETH_EXTRA + NSS_NBUF_PAD_EXTRA;
 
 	/*
@@ -519,6 +485,15 @@ nss_tx_status_t nss_phys_if_change_mtu(struct nss_ctx_instance *nss_ctx, uint32_
 	if (nss_ctx->max_buf_size < NSS_NBUF_PAYLOAD_SIZE) {
 		nss_ctx->max_buf_size = NSS_NBUF_PAYLOAD_SIZE;
 	}
+#else
+	nss_ctx->max_buf_size = NSS_EMPTY_BUFFER_SIZE;
+#endif
+
+
+#if (NSS_SKB_REUSE_SUPPORT == 1)
+	if (nss_ctx->max_buf_size > nss_core_get_max_reuse())
+		nss_core_set_max_reuse(ALIGN(nss_ctx->max_buf_size * 2, PAGE_SIZE));
+#endif
 
 	nss_info("Current mtu:%u mtu_sz:%u max_buf_size:%d\n", mtu, mtu_sz, nss_ctx->max_buf_size);
 
@@ -598,6 +573,31 @@ nss_tx_status_t nss_phys_if_pause_on_off(struct nss_ctx_instance *nss_ctx, uint3
 
 	return nss_phys_if_msg_sync(nss_ctx, &nim);
 }
+
+/*
+ * nss_phys_if_set_nexthop()
+ *	Configures nexthop for an interface
+ */
+nss_tx_status_t nss_phys_if_set_nexthop(struct nss_ctx_instance *nss_ctx, uint32_t if_num, uint32_t nexthop)
+{
+	struct nss_phys_if_msg nim;
+
+	NSS_VERIFY_CTX_MAGIC(nss_ctx);
+
+	if (nexthop >= NSS_MAX_NET_INTERFACES) {
+		nss_warning("%p: Invalid nexthop interface number: %d", nss_ctx, nexthop);
+		return NSS_TX_FAILURE_BAD_PARAM;
+	}
+
+	nss_info("%p: Phys If nexthop will be set to %d, id:%d\n", nss_ctx, nexthop, if_num);
+
+	nss_cmn_msg_init(&nim.cm, if_num, NSS_PHYS_IF_SET_NEXTHOP,
+				sizeof(struct nss_if_set_nexthop), nss_phys_if_callback, NULL);
+	nim.msg.if_msg.set_nexthop.nexthop = nexthop;
+
+	return nss_phys_if_msg_sync(nss_ctx, &nim);
+}
+EXPORT_SYMBOL(nss_phys_if_set_nexthop);
 
 /*
  * nss_get_state()
