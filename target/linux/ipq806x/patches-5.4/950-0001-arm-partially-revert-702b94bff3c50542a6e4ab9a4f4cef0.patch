@@ -1,30 +1,16 @@
-From 1b5d43782d2e1833daacf1fcf1601391b821ee2a Mon Sep 17 00:00:00 2001
-From: Rohit Vaswani <rvaswani@codeaurora.org>
-Date: Thu, 7 Feb 2013 12:15:11 -0800
-Subject: [PATCH] Revert "ARM: dma-mapping: remove dmac_clean_range and
- dmac_inv_range"
+From 74ff908650ed96eac907178fb5888f967cefb282 Mon Sep 17 00:00:00 2001
+From: Dan Pasanen <dan.pasanen@gmail.com>
+Date: Thu, 21 Sep 2017 09:55:42 -0500
+Subject: [PATCH] arm: partially revert
+ 702b94bff3c50542a6e4ab9a4f4cef093262fe65
 
-This partially reverts 'commit 702b94bff3c505 ("ARM: dma-mapping:
-remove dmac_clean_range and dmac_inv_range")'
-
-Some MSM drivers still use the dmac_clean and dmac_inv_range APIs.
-Bring back the defines and exports for v7 CPUs.
-
-Signed-off-by: Rohit Vaswani <rvaswani@codeaurora.org>
-Signed-off-by: Abhimanyu Kapur <abhimany@codeaurora.org>
-[sramana: resolved minor merge conflicts]
-Signed-off-by: Srinivas Ramana <sramana@codeaurora.org>
-(cherry picked from commit d6118c0a9f7ab2b131ca36dd3dbd5634603d14fe)
-
-Change-Id: Ib2ddb4452711c5c2013bf29f0b5d8a3572b10357
-Signed-off-by: Manoharan Vijaya Raghavan <mraghava@codeaurora.org>
+* Re-expose some dmi APIs for use in VCSM
 ---
  arch/arm/include/asm/cacheflush.h | 21 +++++++++++++++++++++
  arch/arm/include/asm/glue-cache.h |  2 ++
- arch/arm/mm/cache-v7.S            |  4 ++--
  arch/arm/mm/proc-macros.S         |  2 ++
  arch/arm/mm/proc-syms.c           |  3 +++
- 5 files changed, 30 insertions(+), 2 deletions(-)
+ 4 files changed, 28 insertions(+)
 
 --- a/arch/arm/include/asm/cacheflush.h
 +++ b/arch/arm/include/asm/cacheflush.h
@@ -79,43 +65,23 @@ Signed-off-by: Manoharan Vijaya Raghavan <mraghava@codeaurora.org>
  #endif
 --- a/arch/arm/include/asm/glue-cache.h
 +++ b/arch/arm/include/asm/glue-cache.h
-@@ -156,6 +156,8 @@ static inline void nop_dma_unmap_area(co
+@@ -155,6 +155,8 @@ static inline void nop_dma_unmap_area(co
+ #define __cpuc_coherent_user_range	__glue(_CACHE,_coherent_user_range)
  #define __cpuc_flush_dcache_area	__glue(_CACHE,_flush_kern_dcache_area)
  
++#define dmac_inv_range			__glue(_CACHE,_dma_inv_range)
++#define dmac_clean_range		__glue(_CACHE,_dma_clean_range)
  #define dmac_flush_range		__glue(_CACHE,_dma_flush_range)
-+#define dmac_inv_range			__glue(_CACHE, _dma_inv_range)
-+#define dmac_clean_range		__glue(_CACHE, _dma_clean_range)
  #endif
  
- #endif
---- a/arch/arm/mm/cache-v7.S
-+++ b/arch/arm/mm/cache-v7.S
-@@ -363,7 +363,7 @@ ENDPROC(v7_flush_kern_dcache_area)
-  *	- start   - virtual start address of region
-  *	- end     - virtual end address of region
-  */
--v7_dma_inv_range:
-+ENTRY(v7_dma_inv_range)
- 	dcache_line_size r2, r3
- 	sub	r3, r2, #1
- 	tst	r0, r3
-@@ -393,7 +393,7 @@ ENDPROC(v7_dma_inv_range)
-  *	- start   - virtual start address of region
-  *	- end     - virtual end address of region
-  */
--v7_dma_clean_range:
-+ENTRY(v7_dma_clean_range)
- 	dcache_line_size r2, r3
- 	sub	r3, r2, #1
- 	bic	r0, r0, r3
 --- a/arch/arm/mm/proc-macros.S
 +++ b/arch/arm/mm/proc-macros.S
 @@ -335,6 +335,8 @@ ENTRY(\name\()_cache_fns)
  	.long	\name\()_flush_kern_dcache_area
  	.long	\name\()_dma_map_area
  	.long	\name\()_dma_unmap_area
-+	.long   \name\()_dma_inv_range
-+	.long   \name\()_dma_clean_range
++	.long	\name\()_dma_inv_range
++	.long	\name\()_dma_clean_range
  	.long	\name\()_dma_flush_range
  	.size	\name\()_cache_fns, . - \name\()_cache_fns
  .endm
