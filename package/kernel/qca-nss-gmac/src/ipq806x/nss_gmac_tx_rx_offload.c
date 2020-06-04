@@ -34,6 +34,8 @@
 #include <linux/bitops.h>
 #include <linux/phy.h>
 #include <linux/interrupt.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
 
 #include <nss_gmac_dev.h>
 #include <nss_gmac_network_interface.h>
@@ -111,6 +113,142 @@ static int32_t nss_gmac_setup_tx_desc_queue(struct nss_gmac_dev *gmacdev,
 	return 0;
 }
 
+/* nss_gmac_get_v4_precedence()
+ *	Function to retrieve precedence for IPv4
+ */
+static inline int nss_gmac_get_v4_precedence(struct sk_buff *skb,
+					     int nh_offset,
+					     u8 *precedence)
+{
+	const struct iphdr *iph;
+	struct iphdr iph_hdr;
+
+	iph = skb_header_pointer(skb, nh_offset, sizeof(iph_hdr), &iph_hdr);
+
+	if (!iph || iph->ihl < 5)
+		return -1;
+
+	*precedence = iph->tos >> NSS_GMAC_DSCP_PREC_SHIFT;
+
+	return 0;
+}
+
+/* nss_gmac_get_v6_precedence()
+ *	Function to retrieve precedence for IPv6
+ */
+static inline int nss_gmac_get_v6_precedence(struct sk_buff *skb,
+					     int nh_offset,
+					     u8 *precedence)
+{
+	const struct ipv6hdr *iph;
+	struct ipv6hdr iph_hdr;
+
+	iph = skb_header_pointer(skb, nh_offset, sizeof(iph_hdr), &iph_hdr);
+
+	if (!iph)
+		return -1;
+
+	*precedence = iph->priority >> NSS_GMAC_DSCP6_PREC_SHIFT;
+
+	return 0;
+}
+
+/* nss_gmac_get_skb_precedence()
+ *      Function to retrieve precedence from skb
+ */
+static bool nss_gmac_get_skb_precedence(struct sk_buff *skb, u8 *precedence)
+{
+	int nhoff = skb_network_offset(skb);
+	__be16 proto = skb->protocol;
+	int ret;
+	struct pppoeh_proto *pppoeh, ppp_hdr;
+	const struct vlan_hdr *vlan;
+	struct vlan_hdr _vlan;
+
+inner:
+	switch (proto) {
+	case __constant_htons(ETH_P_IP): {
+		ret = nss_gmac_get_v4_precedence(skb, nhoff, precedence);
+		if (ret)
+			return false;
+		break;
+	}
+	case __constant_htons(ETH_P_IPV6): {
+		ret = nss_gmac_get_v6_precedence(skb, nhoff, precedence);
+		if (ret)
+			return false;
+		break;
+	}
+	case __constant_htons(ETH_P_8021AD):
+	case __constant_htons(ETH_P_8021Q): {
+		vlan = skb_header_pointer(skb, nhoff, sizeof(_vlan), &_vlan);
+		if (!vlan)
+				return false;
+
+		proto = vlan->h_vlan_encapsulated_proto;
+
+		nhoff += sizeof(*vlan);
+		goto inner;
+	}
+	case __constant_htons(ETH_P_PPP_SES): {
+		pppoeh = skb_header_pointer(skb, nhoff,
+					    sizeof(ppp_hdr),
+					    &ppp_hdr);
+		if (!pppoeh)
+			return false;
+
+		proto = pppoeh->proto;
+		nhoff += PPPOE_SES_HLEN;
+		switch (proto) {
+		case __constant_htons(PPP_IP): {
+			ret = nss_gmac_get_v4_precedence(skb,
+							 nhoff,
+							 precedence);
+			if (ret)
+				return false;
+			break;
+		}
+		case __constant_htons(PPP_IPV6): {
+			ret = nss_gmac_get_v6_precedence(skb,
+							 nhoff,
+							 precedence);
+			if (ret)
+				return false;
+			break;
+		}
+		default:
+			return false;
+		}
+		break;
+	}
+	default:
+		return false;
+	}
+
+	return true;
+}
+
+/* nss_gmac_update_prec_stats()
+ *      Function to update per-precedence stats
+ */
+void nss_gmac_update_prec_stats(struct nss_gmac_dev *gmacdev, struct sk_buff *skb, uint8_t dir)
+{
+	uint8_t precedence = 0;
+
+	if (dir == __NSS_GMAC_DIR_RX)
+		skb_reset_network_header(skb);
+
+	if (nss_gmac_get_skb_precedence(skb, &precedence)) {
+
+		spin_lock_bh(&gmacdev->stats_lock);
+		if (dir == __NSS_GMAC_DIR_TX)
+			gmacdev->nss_host_stats.tx_per_prec[precedence]++;
+		else if (dir == __NSS_GMAC_DIR_RX)
+			gmacdev->nss_host_stats.rx_per_prec[precedence]++;
+		spin_unlock_bh(&gmacdev->stats_lock);
+
+	}
+}
 
 /**
  * This sets up the receive Descriptor queue in ring or chain mode.
@@ -517,23 +655,6 @@ static int nss_gmac_slowpath_if_pause_on_off(void *app_data, uint32_t pause_on)
  */
 static void nss_gmac_slowpath_if_get_stats(void *app_data, struct nss_gmac_stats *stats)
 {
-	/* Test code added by quarkysg, 19 Jun 2019  */
-	struct net_device *netdev = (struct net_device *)app_data;
-	struct nss_gmac_dev *gmacdev = (struct nss_gmac_dev *)netdev_priv(netdev);
-
-	stats->rx_bytes = gmacdev->stats.rx_bytes;
-	stats->rx_packets = gmacdev->stats.rx_packets;
-	stats->rx_errors = gmacdev->stats.rx_errors;
-	stats->rx_overflow_errors = gmacdev->stats.rx_over_errors;
-	stats->rx_crc_errors = gmacdev->stats.rx_crc_errors;
-	stats->rx_missed = gmacdev->stats.rx_missed_errors;
-
-	stats->tx_bytes = gmacdev->stats.tx_bytes;
-	stats->tx_packets = gmacdev->stats.tx_packets;
-	stats->tx_errors = gmacdev->stats.tx_errors;
-	stats->tx_dropped = gmacdev->stats.tx_dropped;
-	stats->tx_collisions = gmacdev->stats.collisions;
-	/* End of test code by quarkysg, 19 Jun 2019 */
 }
 
 struct nss_gmac_data_plane_ops nss_gmac_slowpath_ops = {
@@ -551,6 +672,7 @@ struct nss_gmac_data_plane_ops nss_gmac_slowpath_ops = {
 /**
  * NSS Driver interface APIs
  */
+
 
 /**
  * @brief Rx Callback to receive frames from NSS
@@ -574,6 +696,9 @@ void nss_gmac_receive(struct net_device *netdev, struct sk_buff *skb,
 	netdev_dbg(netdev,
 			"%s: Rx on gmac%d, packet len %d, CSUM %d\n",
 			__func__, gmacdev->macid, skb->len, skb->ip_summed);
+
+	if (gmacdev->ctx->nss_gmac_per_prec_stats_enable)
+		nss_gmac_update_prec_stats(gmacdev, skb, __NSS_GMAC_DIR_RX);
 
 	napi_gro_receive(napi, skb);
 }
@@ -768,6 +893,9 @@ int32_t nss_gmac_xmit_frames(struct sk_buff *skb, struct net_device *netdev)
 
 	netdev_dbg(netdev, "%s:Tx packet, len %d, CSUM %d\n",
 			__func__, skb->len, skb->ip_summed);
+
+	if (gmacdev->ctx->nss_gmac_per_prec_stats_enable)
+		nss_gmac_update_prec_stats(gmacdev, skb, __NSS_GMAC_DIR_TX);
 
 	msg_status = gmacdev->data_plane_ops->xmit(gmacdev->data_plane_ctx, skb);
 
