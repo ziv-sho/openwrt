@@ -1091,7 +1091,7 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 		reply_tuple.dst.u3.ip = orig_tuple.src.u3.ip;
 		sender = ECM_TRACKER_SENDER_TYPE_SRC;
 	} else {
-		if (unlikely(ct == nf_ct_untracked_get())) {
+		if (unlikely(ctinfo == IP_CT_UNTRACKED)) {
 #ifdef ECM_INTERFACE_VXLAN_ENABLE
 			/*
 			 * If the conntrack connection is set as untracked,
