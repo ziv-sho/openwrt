@@ -348,14 +348,6 @@ static int ecm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	}
 
 	/*
-	 * Special untracked connection is not monitored
-	 */
-	if (ct == nf_ct_untracked_get()) {
-		DEBUG_TRACE("Fake connection event - ignoring\n");
-		return NOTIFY_DONE;
-	}
-
-	/*
 	 * Only interested if this is IPv4 or IPv6.
 	 */
 	if (nf_ct_l3num(ct) == AF_INET) {
