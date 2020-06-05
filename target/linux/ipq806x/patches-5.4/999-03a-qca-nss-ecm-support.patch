@@ -1,6 +1,6 @@
 --- a/include/linux/if_bridge.h
 +++ b/include/linux/if_bridge.h
-@@ -148,4 +148,39 @@ br_port_flag_is_set(const struct net_dev
+@@ -148,4 +148,40 @@ br_port_flag_is_set(const struct net_dev
  }
  #endif
  
@@ -27,6 +27,7 @@
 +
 +struct br_fdb_event {
 +	struct net_device *dev;
++	struct net_device *orig_dev;
 +	unsigned char      addr[6];
 +	unsigned char      is_local;
 +};
