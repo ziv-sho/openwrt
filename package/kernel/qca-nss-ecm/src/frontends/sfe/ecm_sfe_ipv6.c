@@ -735,7 +735,7 @@ static unsigned int ecm_sfe_ipv6_ip_process(struct net_device *out_dev, struct n
 		ECM_IP_ADDR_TO_NIN6_ADDR(reply_tuple.dst.u3.in6, ip_hdr.src_addr);
 		sender = ECM_TRACKER_SENDER_TYPE_SRC;
 	} else {
-		if (unlikely(ct == nf_ct_untracked_get())) {
+		if (unlikely(ctinfo == IP_CT_UNTRACKED)) {
 			DEBUG_TRACE("%p: ct: untracked\n", skb);
 			return NF_ACCEPT;
 		}
@@ -1257,7 +1257,9 @@ sync_conntrack:
 	}
 
 	ct = nf_ct_tuplehash_to_ctrack(h);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
 	NF_CT_ASSERT(ct->timeout.data == (unsigned long)ct);
+#endif /*KERNEL_VERSION(4, 9, 0)*/
 	DEBUG_TRACE("%p: SFE Sync: conntrack connection\n", ct);
 
 	ecm_front_end_flow_and_return_directions_get(ct, flow_ip, 6, &flow_dir, &return_dir);
@@ -1277,7 +1279,11 @@ sync_conntrack:
 		delta_jiffies = ((sync->inc_ticks * HZ) + (MSEC_PER_SEC / 2)) / MSEC_PER_SEC;
 
 		spin_lock_bh(&ct->lock);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
+		ct->timeout += delta_jiffies;
+#else
 		ct->timeout.expires += delta_jiffies;
+#endif /*KERNEL_VERSION(4, 9, 0)*/
 		spin_unlock_bh(&ct->lock);
 	}
 #if (LINUX_VERSION_CODE <= KERNEL_VERSION(3,6,0))
@@ -1334,17 +1340,26 @@ sync_conntrack:
 			u_int64_t reply_pkts = atomic64_read(&acct[IP_CT_DIR_REPLY].packets);
 
 			if (reply_pkts != 0) {
-				struct nf_conntrack_l4proto *l4proto;
 				unsigned int *timeouts;
 
 				set_bit(IPS_SEEN_REPLY_BIT, &ct->status);
 				set_bit(IPS_ASSURED_BIT, &ct->status);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
+				timeouts = nf_ct_timeout_lookup(ct);
+#else
+				struct nf_conntrack_l4proto *l4proto;
+
 				l4proto = __nf_ct_l4proto_find(AF_INET6, IPPROTO_UDP);
 				timeouts = nf_ct_timeout_lookup(&init_net, ct, l4proto);
+#endif /*KERNEL_VERSION(4, 19, 0)*/
 
 				spin_lock_bh(&ct->lock);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
+				ct->timeout = jiffies + timeouts[UDP_CT_REPLIED];
+#else
 				ct->timeout.expires = jiffies + timeouts[UDP_CT_REPLIED];
+#endif /*KERNEL_VERSION(4, 9, 0)*/
 				spin_unlock_bh(&ct->lock);
 			}
 		}
@@ -1626,7 +1641,7 @@ int ecm_sfe_ipv6_init(struct dentry *dentry)
 	/*
 	 * Register netfilter hooks
 	 */
-	result = nf_register_hooks(ecm_sfe_ipv6_netfilter_hooks, ARRAY_SIZE(ecm_sfe_ipv6_netfilter_hooks));
+	result = nf_register_net_hooks(&init_net, ecm_sfe_ipv6_netfilter_hooks, ARRAY_SIZE(ecm_sfe_ipv6_netfilter_hooks));
 	if (result < 0) {
 		DEBUG_ERROR("Can't register netfilter hooks.\n");
 		sfe_drv_ipv6_notify_unregister();
@@ -1658,7 +1673,7 @@ void ecm_sfe_ipv6_exit(void)
 	/*
 	 * Stop the network stack hooks
 	 */
-	nf_unregister_hooks(ecm_sfe_ipv6_netfilter_hooks,
+	nf_unregister_net_hooks(&init_net, ecm_sfe_ipv6_netfilter_hooks,
 			    ARRAY_SIZE(ecm_sfe_ipv6_netfilter_hooks));
 
 	/*
