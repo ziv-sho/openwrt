@@ -7120,7 +7120,11 @@ static int ecm_interface_wifi_event_rx(struct socket *sock, struct sockaddr_nl *
 #endif
 	oldfs = get_fs();
 	set_fs(KERNEL_DS);
+#if (LINUX_VERSION_CODE >=  KERNEL_VERSION(4, 7, 0))
+	size = sock_recvmsg(sock, &msg, msg.msg_flags);
+#else
 	size = sock_recvmsg(sock, &msg, len, msg.msg_flags);
+#endif /*KERNEL_VERSION(4, 7, 0)*/
 	set_fs(oldfs);
 
 	return size;
@@ -7209,7 +7213,11 @@ int ecm_interface_wifi_event_stop(void)
 	}
 
 	DEBUG_INFO("kill ecm_interface_wifi_event thread\n");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
+	send_sig(SIGKILL, __ewn.thread, 1);
+#else
 	force_sig(SIGKILL, __ewn.thread);
+#endif /*KERNEL_VERSION(5, 3, 0)*/
 	err = kthread_stop(__ewn.thread);
 	__ewn.thread = NULL;
 
