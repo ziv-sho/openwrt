@@ -68,8 +68,8 @@
 #include "ecm_db_types.h"
 #include "ecm_state.h"
 #include "ecm_tracker.h"
-#include "ecm_classifier.h"
 #include "ecm_front_end_types.h"
+#include "ecm_classifier.h"
 #include "ecm_tracker_udp.h"
 #include "ecm_tracker_tcp.h"
 #include "ecm_classifier_nl.h"
@@ -139,7 +139,6 @@ static int ecm_classifier_nl_count = 0;					/* Tracks number of instances alloca
  */
 struct ecm_db_listener_instance *ecm_classifier_nl_li = NULL;
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0))
 /*
  * Generic Netlink family and multicast group names
  */
@@ -148,56 +147,13 @@ static struct genl_multicast_group ecm_cl_nl_genl_mcgrp[] = {
 		.name = ECM_CL_NL_GENL_MCGRP,
 	},
 };
-#endif /*KERNEL_VERSION(4, 10, 0)*/
-
-static int ecm_classifier_nl_genl_msg_ACCEL(struct sk_buff *skb, struct genl_info *info);
-static int ecm_classifier_nl_genl_msg_DUMP(struct sk_buff *skb, struct netlink_callback *cb);
-
-/*
- * Generic Netlink message-to-handler mapping
- */
-static struct genl_ops ecm_cl_nl_genl_ops[] = {
-	{
-		.cmd = ECM_CL_NL_GENL_CMD_ACCEL,
-		.flags = 0,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
-		.policy = ecm_cl_nl_genl_policy,
-#endif /*KERNEL_VERSION(5, 2, 0)*/
-		.doit = ecm_classifier_nl_genl_msg_ACCEL,
-		.dumpit = NULL,
-	},
-	{
-		.cmd = ECM_CL_NL_GENL_CMD_ACCEL_OK,
-		.flags = 0,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
-		.policy = ecm_cl_nl_genl_policy,
-#endif /*KERNEL_VERSION(5, 2, 0)*/
-		.doit = NULL,
-		.dumpit = ecm_classifier_nl_genl_msg_DUMP,
-	},
-	{
-		.cmd = ECM_CL_NL_GENL_CMD_CONNECTION_CLOSED,
-		.flags = 0,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
-		.policy = ecm_cl_nl_genl_policy,
-#endif /*KERNEL_VERSION(5, 2, 0)*/
-		.doit = NULL,
-		.dumpit = ecm_classifier_nl_genl_msg_DUMP,
-	},
-};
 
 static struct genl_family ecm_cl_nl_genl_family = {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0))
 	.id = GENL_ID_GENERATE,
-#endif /*KERNEL_VERSION(4, 10, 0)*/
 	.hdrsize = 0,
 	.name = ECM_CL_NL_GENL_NAME,
 	.version = ECM_CL_NL_GENL_VERSION,
 	.maxattr = ECM_CL_NL_GENL_ATTR_MAX,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
-	.ops = ecm_cl_nl_genl_ops,
-	.n_ops = ARRAY_SIZE(ecm_cl_nl_genl_ops),
-#endif /*KERNEL_VERSION(4, 10, 0)*/
 };
 
 /*
@@ -261,7 +217,12 @@ ecm_classifier_nl_send_genl_msg(enum ECM_CL_NL_GENL_CMD cmd,
 		return ret;
 	}
 
-	genlmsg_end(skb, msg_head);
+	ret = genlmsg_end(skb, msg_head);
+	if (ret < 0) {
+		DEBUG_WARN("failed to finalize genl msg: %d\n", ret);
+		nlmsg_free(skb);
+		return ret;
+	}
 
 	/* genlmsg_multicast frees the skb in both success and error cases */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
@@ -381,10 +342,10 @@ static void ecm_classifier_nl_genl_msg_ACCEL_OK(struct ecm_classifier_nl_instanc
 	spin_unlock_bh(&ecm_classifier_nl_lock);
 
 	proto = ecm_db_connection_protocol_get(ci);
-	ecm_db_connection_from_address_get(ci, src_ip);
-	src_port = (uint16_t)ecm_db_connection_from_port_get(ci);
-	ecm_db_connection_to_address_get(ci, dst_ip);
-	dst_port = ecm_db_connection_to_port_get(ci);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_FROM, src_ip);
+	src_port = (uint16_t)ecm_db_connection_port_get(ci, ECM_DB_OBJ_DIR_FROM);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_TO, dst_ip);
+	dst_port = ecm_db_connection_port_get(ci, ECM_DB_OBJ_DIR_TO);
 
 	ip_version = ecm_db_connection_ip_version_get(ci);
 	ecm_db_connection_deref(ci);
@@ -759,7 +720,7 @@ static void ecm_classifier_nl_sync_to_v4(struct ecm_classifier_instance *aci, st
 {
 	struct ecm_classifier_nl_instance *cnli;
 
-	if (!(sync->flow_tx_packet_count || sync->return_tx_packet_count)) {
+	if (!(sync->tx_packet_count[ECM_CONN_DIR_FLOW] || sync->tx_packet_count[ECM_CONN_DIR_RETURN])) {
 		/*
 		 * Nothing to update.
 		 * We only care about flows that are actively being accelerated.
@@ -815,7 +776,7 @@ static void ecm_classifier_nl_sync_to_v6(struct ecm_classifier_instance *aci, st
 	cnli = (struct ecm_classifier_nl_instance *)aci;
 	DEBUG_CHECK_MAGIC(cnli, ECM_CLASSIFIER_NL_INSTANCE_MAGIC, "%p: magic failed", cnli);
 
-	if (!(sync->flow_tx_packet_count || sync->return_tx_packet_count)) {
+	if (!(sync->tx_packet_count[ECM_CONN_DIR_FLOW] || sync->tx_packet_count[ECM_CONN_DIR_RETURN])) {
 		/*
 		 * No traffic has been accelerated.
 		 * Nothing to update. We only care about flows that are actively being accelerated.
@@ -984,10 +945,10 @@ static struct nf_conn *ecm_classifier_nl_ct_get_and_ref(struct ecm_db_connection
 	DEBUG_ASSERT(ci != NULL, "ci was NULL for ct lookup");
 	ip_version = ecm_db_connection_ip_version_get(ci);
 	proto = ecm_db_connection_protocol_get(ci);
-	ecm_db_connection_from_address_get(ci, src_ip);
-	src_port = (uint16_t)ecm_db_connection_from_port_get(ci);
-	ecm_db_connection_to_address_nat_get(ci, dst_ip);
-	dst_port = (uint16_t)ecm_db_connection_to_port_nat_get(ci);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_FROM, src_ip);
+	src_port = (uint16_t)ecm_db_connection_port_get(ci, ECM_DB_OBJ_DIR_FROM);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_TO_NAT, dst_ip);
+	dst_port = (uint16_t)ecm_db_connection_port_get(ci, ECM_DB_OBJ_DIR_TO_NAT);
 
 	if (ip_version == 4) {
 		tuple.src.l3num = AF_INET;
@@ -1111,10 +1072,10 @@ static void ecm_classifier_nl_connection_removed(void *arg, struct ecm_db_connec
 	}
 
 	proto = ecm_db_connection_protocol_get(ci);
-	ecm_db_connection_from_address_get(ci, src_ip);
-	src_port = (uint16_t)ecm_db_connection_from_port_get(ci);
-	ecm_db_connection_to_address_get(ci, dst_ip);
-	dst_port = ecm_db_connection_to_port_get(ci);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_FROM, src_ip);
+	src_port = (uint16_t)ecm_db_connection_port_get(ci, ECM_DB_OBJ_DIR_FROM);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_TO, dst_ip);
+	dst_port = ecm_db_connection_port_get(ci, ECM_DB_OBJ_DIR_TO);
 
 	DEBUG_INFO("%p: NL classifier: %p, issue Close\n", ci, cnli);
 	ecm_classifier_nl_genl_msg_closed(ci, cnli, proto, src_ip, dst_ip, src_port, dst_port);
@@ -1418,7 +1379,6 @@ static struct file_operations ecm_classifier_nl_cmd_fops = {
 	.write = ecm_classifier_nl_set_command,
 };
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 /*
  * Generic Netlink attr checking policies
  */
@@ -1428,13 +1388,39 @@ ecm_cl_nl_genl_policy[ECM_CL_NL_GENL_ATTR_COUNT] = {
 		.type = NLA_UNSPEC,
 		.len = sizeof(struct ecm_cl_nl_genl_attr_tuple), },
 };
-#endif /*KERNEL_VERSION(5, 2, 0)*/
+
+/*
+ * Generic Netlink message-to-handler mapping
+ */
+static struct genl_ops ecm_cl_nl_genl_ops[] = {
+	{
+		.cmd = ECM_CL_NL_GENL_CMD_ACCEL,
+		.flags = 0,
+		.policy = ecm_cl_nl_genl_policy,
+		.doit = ecm_classifier_nl_genl_msg_ACCEL,
+		.dumpit = NULL,
+	},
+	{
+		.cmd = ECM_CL_NL_GENL_CMD_ACCEL_OK,
+		.flags = 0,
+		.policy = ecm_cl_nl_genl_policy,
+		.doit = NULL,
+		.dumpit = ecm_classifier_nl_genl_msg_DUMP,
+	},
+	{
+		.cmd = ECM_CL_NL_GENL_CMD_CONNECTION_CLOSED,
+		.flags = 0,
+		.policy = ecm_cl_nl_genl_policy,
+		.doit = NULL,
+		.dumpit = ecm_classifier_nl_genl_msg_DUMP,
+	},
+};
 
 static int ecm_classifier_nl_register_genl(void)
 {
-	int result = 0;
+	int result;
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0))
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
 	result = genl_register_family_with_ops_groups(&ecm_cl_nl_genl_family,
 						      ecm_cl_nl_genl_ops,
 						      ecm_cl_nl_genl_mcgrp);
@@ -1442,7 +1428,7 @@ static int ecm_classifier_nl_register_genl(void)
 		DEBUG_ERROR("failed to register genl ops: %d\n", result);
 		return result;
 	}
-#elif (LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0))
+#else
 	result = genl_register_family(&ecm_cl_nl_genl_family);
 	if (result != 0) {
 		DEBUG_ERROR("failed to register genl family: %d\n", result);

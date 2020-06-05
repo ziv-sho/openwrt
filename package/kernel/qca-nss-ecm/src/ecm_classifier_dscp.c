@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2016, The Linux Foundation.  All rights reserved.
+ * Copyright (c) 2014-2016, 2019, The Linux Foundation.  All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -64,8 +64,8 @@
 #include "ecm_db_types.h"
 #include "ecm_state.h"
 #include "ecm_tracker.h"
-#include "ecm_classifier.h"
 #include "ecm_front_end_types.h"
+#include "ecm_classifier.h"
 #include "ecm_tracker_udp.h"
 #include "ecm_tracker_tcp.h"
 #include "ecm_db.h"
@@ -177,7 +177,8 @@ static int ecm_classifier_dscp_deref(struct ecm_classifier_instance *ci)
 		DEBUG_ASSERT(ecm_classifier_dscp_instances == cdscpi, "%p: list bad %p\n", cdscpi, ecm_classifier_dscp_instances);
 		ecm_classifier_dscp_instances = cdscpi->next;
 	}
-
+	cdscpi->next = NULL;
+	cdscpi->prev = NULL;
 	spin_unlock_bh(&ecm_classifier_dscp_lock);
 
 	/*
@@ -207,10 +208,10 @@ static void ecm_classifier_dscp_process(struct ecm_classifier_instance *aci, ecm
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
 	struct nf_ct_dscpremark_ext *dscpcte;
-	uint32_t flow_qos_tag;
-	uint32_t return_qos_tag;
-	uint8_t flow_dscp;
-	uint8_t return_dscp;
+	uint32_t flow_qos_tag = 0;
+	uint32_t return_qos_tag = 0;
+	uint8_t flow_dscp = 0;
+	uint8_t return_dscp = 0;
 	bool dscp_marked = false;
 
 	cdscpi = (struct ecm_classifier_dscp_instance *)aci;
@@ -261,6 +262,7 @@ static void ecm_classifier_dscp_process(struct ecm_classifier_instance *aci, ecm
 		cdscpi->process_response.relevance = ECM_CLASSIFIER_RELEVANCE_NO;
 		goto dscp_classifier_out;
 	}
+
 	feci = ecm_db_connection_front_end_get_and_ref(ci);
 	accel_mode = feci->accel_state_get(feci);
 	feci->deref(feci);
@@ -304,9 +306,6 @@ static void ecm_classifier_dscp_process(struct ecm_classifier_instance *aci, ecm
 	}
 
 	/*
-	 * Extract the priority and DSCP from skb and store into ct extension
-	 * for each direction.
-	 *
 	 * For TCP flows, we would have the values for both the directions by
 	 * the time the connection is established. For UDP flows, we copy
 	 * over the values from one direction to another if we find the
@@ -315,24 +314,43 @@ static void ecm_classifier_dscp_process(struct ecm_classifier_instance *aci, ecm
 	 * a. We might not have seen a packet in the opposite direction
 	 * b. There were no explicitly configured priority/DSCP for the opposite
 	 *    direction.
-	 *
 	 */
-	if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+	if (protocol == IPPROTO_TCP) {
 		/*
-		 * Record latest flow
+		 * TCP is established at this point, priority and DSCP values were already in the extension instance.
+		 * They were extracted from the skb in the frontend file. So, copy them from there.
 		 */
-		flow_qos_tag = skb->priority;
-		dscpcte->flow_priority = flow_qos_tag;
-		flow_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;	/* NOTE: XT_DSCP_SHIFT is okay for V4 and V6 */
-		dscpcte->flow_dscp = flow_dscp;
-
-		/*
-		 * Get the other side ready to return our PR
-		 */
-		if (protocol == IPPROTO_TCP) {
+		if (((sender == ECM_TRACKER_SENDER_TYPE_SRC) && (IP_CT_DIR_ORIGINAL == CTINFO2DIR(ctinfo))) ||
+				((sender == ECM_TRACKER_SENDER_TYPE_DEST) && (IP_CT_DIR_REPLY == CTINFO2DIR(ctinfo)))) {
+			flow_qos_tag = dscpcte->flow_priority;
 			return_qos_tag = dscpcte->reply_priority;
+			flow_dscp = dscpcte->flow_dscp;
 			return_dscp = dscpcte->reply_dscp;
 		} else {
+			/* TCP is in established state and the direction of this packet is opposite to the direction of the ct
+			 * in which the TCP connection was initiated. This can be the case when the ECM rule was originally
+			 * created in the direction of the ct, but defuncted for some reason. And the next packet that is now being
+			 * processed by ECM for this TCP connection is in the opposite direction relative to ct. So, we ensure that
+			 * we retrieve the qos_tag/dscp from the ct based on the direction of the new ECM connection relative to the ct
+			 */
+			return_qos_tag = dscpcte->flow_priority;
+			flow_qos_tag = dscpcte->reply_priority;
+			return_dscp = dscpcte->flow_dscp;
+			flow_dscp = dscpcte->reply_dscp;
+		}
+		DEBUG_TRACE("TCP Flow DSCP: %x Flow priority: %d, Return DSCP: %x Return priority: %d sender: %d ct_dir: %d\n",
+			    flow_dscp, flow_qos_tag, return_dscp, return_qos_tag, sender, CTINFO2DIR(ctinfo));
+
+	} else { /* UDP */
+		if (sender == ECM_TRACKER_SENDER_TYPE_SRC) {
+			/*
+			 * Record latest flow
+			 */
+			flow_qos_tag = skb->priority;
+			dscpcte->flow_priority = flow_qos_tag;
+			flow_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;	/* NOTE: XT_DSCP_SHIFT is okay for V4 and V6 */
+			dscpcte->flow_dscp = flow_dscp;
+
 			/*
 			 * Copy over the flow direction QoS
 			 * and DSCP if the reply direction
@@ -349,25 +367,16 @@ static void ecm_classifier_dscp_process(struct ecm_classifier_instance *aci, ecm
 			} else {
 				return_dscp = dscpcte->reply_dscp;
 			}
-		}
-		DEBUG_TRACE("Flow DSCP: %x Flow priority: %d, Return DSCP: %x Return priority: %d\n",
-				dscpcte->flow_dscp, dscpcte->flow_priority, return_dscp, return_qos_tag);
-	} else {
-		/*
-		 * Record latest return
-		 */
-		return_qos_tag = skb->priority;
-		dscpcte->reply_priority = return_qos_tag;
-		return_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;	/* NOTE: XT_DSCP_SHIFT is okay for V4 and V6 */
-		dscpcte->reply_dscp = return_dscp;
 
-		/*
-		 * Get the other side ready to return our PR
-		 */
-		if (protocol == IPPROTO_TCP) {
-			flow_qos_tag = dscpcte->flow_priority;
-			flow_dscp = dscpcte->flow_dscp;
 		} else {
+			/*
+			 * Record latest return
+			 */
+			return_qos_tag = skb->priority;
+			dscpcte->reply_priority = return_qos_tag;
+			return_dscp = ip_hdr->ds >> XT_DSCP_SHIFT;	/* NOTE: XT_DSCP_SHIFT is okay for V4 and V6 */
+			dscpcte->reply_dscp = return_dscp;
+
 			/*
 			 * Copy over the return direction QoS
 			 * and DSCP if the flow direction
@@ -385,8 +394,9 @@ static void ecm_classifier_dscp_process(struct ecm_classifier_instance *aci, ecm
 				flow_dscp = dscpcte->flow_dscp;
 			}
 		}
-		DEBUG_TRACE("Return DSCP: %x Return priority: %d, Flow DSCP: %x Flow priority: %d\n",
-				dscpcte->reply_dscp, dscpcte->reply_priority, flow_dscp, flow_qos_tag);
+		DEBUG_TRACE("UDP Flow DSCP: %x Flow priority: %d, Return DSCP: %x Return priority: %d sender: %d\n",
+			    flow_dscp, flow_qos_tag, return_dscp, return_qos_tag, sender);
+
 	}
 	spin_unlock_bh(&ct->lock);
 
@@ -402,6 +412,26 @@ static void ecm_classifier_dscp_process(struct ecm_classifier_instance *aci, ecm
 	cdscpi->process_response.process_actions = ECM_CLASSIFIER_PROCESS_ACTION_QOS_TAG;
 	cdscpi->process_response.flow_qos_tag = flow_qos_tag;
 	cdscpi->process_response.return_qos_tag = return_qos_tag;
+
+	/*
+	 * IGS qostag values in conntrack are stored as per the direction of the flow.
+	 * But ECM always create an acceleration connection rule treating packet's source
+	 * address as the source of the connection irrespective of the CT's direction.
+	 * So, the IGS qostag values should be appropriately filled in ECM acceleration
+	 * connection rule.
+	 * Scenario's example: For WAN to LAN traffic for tunnel, the CT will be created from
+	 * WAN to LAN but the CI will not be created as ECM will not get the packet in this
+	 * direction. CI will be created for packet from LAN to WAN.
+	 */
+	cdscpi->process_response.process_actions |= ECM_CLASSIFIER_PROCESS_ACTION_IGS_QOS_TAG;
+	if (((sender == ECM_TRACKER_SENDER_TYPE_SRC) && (IP_CT_DIR_ORIGINAL == CTINFO2DIR(ctinfo))) ||
+		((sender == ECM_TRACKER_SENDER_TYPE_DEST) && (IP_CT_DIR_REPLY == CTINFO2DIR(ctinfo)))) {
+		cdscpi->process_response.igs_flow_qos_tag = dscpcte->igs_flow_qos_tag;
+		cdscpi->process_response.igs_return_qos_tag = dscpcte->igs_reply_qos_tag;
+	} else {
+		cdscpi->process_response.igs_return_qos_tag = dscpcte->igs_flow_qos_tag;
+		cdscpi->process_response.igs_flow_qos_tag = dscpcte->igs_reply_qos_tag;
+	}
 
 	/*
 	 * Check if we need to set DSCP

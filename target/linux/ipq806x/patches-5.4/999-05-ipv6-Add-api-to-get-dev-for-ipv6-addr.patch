@@ -1,0 +1,72 @@
+From 44d271d47181561326dd09fc16719010b8c3c085 Mon Sep 17 00:00:00 2001
+From: Murat Sezgin <msezgin@codeaurora.org>
+Date: Tue, 27 Jan 2015 11:08:27 -0800
+Subject: [PATCH] ipv6: Add api to get dev for ipv6 addr.
+
+API function takes an IPv6 address and returns
+a hold to a net device that has a matching address.
+
+Change-Id: I21af606193fafd68a61249e893749b87f6b36c76
+Signed-off-by: Murat Sezgin <msezgin@codeaurora.org>
+---
+ include/net/addrconf.h |  3 +++
+ net/ipv6/addrconf.c    | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+
+diff --git a/include/net/addrconf.h b/include/net/addrconf.h
+index 2ee7fc0bc205..b51cc83c22e5 100644
+--- a/include/net/addrconf.h
++++ b/include/net/addrconf.h
+@@ -385,6 +385,9 @@ static inline bool ipv6_addr_is_solict_mult(const struct in6_addr *addr)
+ #endif
+ }
+ 
++struct net_device *ipv6_dev_find(struct net *net, struct in6_addr *addr,
++				 int strict);
++
+ #ifdef CONFIG_PROC_FS
+ int if6_proc_init(void);
+ void if6_proc_exit(void);
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index e8d3da0817d3..82cc1efe5b49 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -1768,6 +1768,35 @@ struct inet6_ifaddr *ipv6_get_ifaddr(struct net *net, const struct in6_addr *add
+ 	return result;
+ }
+ 
++/* ipv6_dev_find()
++ *	Find (and hold) net device that has the given address.
++ *	Or NULL on failure.
++ */
++struct net_device *ipv6_dev_find(struct net *net, struct in6_addr *addr,
++				 int strict)
++{
++	struct inet6_ifaddr *ifp;
++	struct net_device *dev;
++
++	ifp = ipv6_get_ifaddr(net, addr, NULL, strict);
++	if (!ifp)
++		return NULL;
++
++	if (!ifp->idev) {
++		in6_ifa_put(ifp);
++		return NULL;
++	}
++
++	dev = ifp->idev->dev;
++	if (dev)
++		dev_hold(dev);
++
++	in6_ifa_put(ifp);
++
++	return dev;
++}
++EXPORT_SYMBOL(ipv6_dev_find);
++
+ /* Gets referenced address, destroys ifaddr */
+ 
+ static void addrconf_dad_stop(struct inet6_ifaddr *ifp, int dad_failed)
+-- 
+2.26.2
+

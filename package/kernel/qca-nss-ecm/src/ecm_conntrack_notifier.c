@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, 2019 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -73,8 +73,8 @@
 #include "ecm_db_types.h"
 #include "ecm_state.h"
 #include "ecm_tracker.h"
-#include "ecm_classifier.h"
 #include "ecm_front_end_types.h"
+#include "ecm_classifier.h"
 #include "ecm_tracker_udp.h"
 #include "ecm_tracker_tcp.h"
 #include "ecm_tracker_datagram.h"
@@ -347,15 +347,13 @@ static int ecm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 		return NOTIFY_DONE;
 	}
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0))
 	/*
 	 * Special untracked connection is not monitored
 	 */
-	if (ct == &nf_conntrack_untracked) {
+	if (ct == nf_ct_untracked_get()) {
 		DEBUG_TRACE("Fake connection event - ignoring\n");
 		return NOTIFY_DONE;
 	}
-#endif /*KERNEL_VERSION(4, 12, 0)*/
 
 	/*
 	 * Only interested if this is IPv4 or IPv6.

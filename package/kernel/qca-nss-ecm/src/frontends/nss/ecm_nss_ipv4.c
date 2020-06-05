@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2017 The Linux Foundation.  All rights reserved.
+ * Copyright (c) 2014-2020 The Linux Foundation.  All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -28,6 +28,7 @@
 #include <net/route.h>
 #include <net/ip.h>
 #include <net/tcp.h>
+#include <net/addrconf.h>
 #include <asm/unaligned.h>
 #include <asm/uaccess.h>	/* for put_user */
 #include <net/ipv6.h>
@@ -44,6 +45,9 @@
 #include <linux/netfilter_bridge.h>
 #include <linux/if_bridge.h>
 #include <net/arp.h>
+#ifdef ECM_INTERFACE_VXLAN_ENABLE
+#include <net/vxlan.h>
+#endif
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_acct.h>
 #include <net/netfilter/nf_conntrack_helper.h>
@@ -81,8 +85,8 @@
 #include "ecm_db_types.h"
 #include "ecm_state.h"
 #include "ecm_tracker.h"
-#include "ecm_classifier.h"
 #include "ecm_front_end_types.h"
+#include "ecm_classifier.h"
 #include "ecm_tracker_datagram.h"
 #include "ecm_tracker_udp.h"
 #include "ecm_tracker_tcp.h"
@@ -100,6 +104,9 @@
 #endif
 #include "ecm_front_end_common.h"
 #include "ecm_front_end_ipv4.h"
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+#include <ovsmgr.h>
+#endif
 
 #define ECM_NSS_IPV4_STATS_SYNC_PERIOD msecs_to_jiffies(1000)
 #define ECM_NSS_IPV4_STATS_SYNC_UDELAY 4000	/* Delay for 4 ms */
@@ -110,6 +117,7 @@ int ecm_nss_ipv4_nack_limit_default = 250;			/* Default nack limit. */
 int ecm_nss_ipv4_accelerated_count = 0;			/* Total offloads */
 int ecm_nss_ipv4_pending_accel_count = 0;			/* Total pending offloads issued to the NSS / awaiting completion */
 int ecm_nss_ipv4_pending_decel_count = 0;			/* Total pending deceleration requests issued to the NSS / awaiting completion */
+int ecm_nss_ipv4_vlan_passthrough_enable = 0;		/* VLAN passthrough feature enable or disable flag */
 
 /*
  * Limiting the acceleration of connections.
@@ -184,10 +192,19 @@ struct ecm_db_node_instance *ecm_nss_ipv4_node_establish_and_ref(struct ecm_fron
 	struct net_device *local_dev;
 #endif
 
-#if defined(ECM_INTERFACE_MAP_T_ENABLE)
+#if defined(ECM_INTERFACE_MAP_T_ENABLE) || defined(ECM_INTERFACE_GRE_TUN_ENABLE)
 	struct net_device *in;
 #endif
 
+#ifdef ECM_INTERFACE_OVPN_ENABLE
+	struct net_device *out_dev;
+#endif
+
+#ifdef ECM_INTERFACE_GRE_TUN_ENABLE
+	struct ip_tunnel *gre4_tunnel;
+	struct ip6_tnl *gre6_tunnel;
+	ip_addr_t local_gre_tun_ip;
+#endif
 	DEBUG_INFO("Establish node for " ECM_IP_ADDR_DOT_FMT "\n", ECM_IP_ADDR_TO_DOT(addr));
 
 	/*
@@ -219,7 +236,7 @@ struct ecm_db_node_instance *ecm_nss_ipv4_node_establish_and_ref(struct ecm_fron
 #ifdef ECM_INTERFACE_PPTP_ENABLE
 		struct ecm_db_interface_info_pptp pptp_info;
 #endif
-		type = ecm_db_connection_iface_type_get(interface_list[i]);
+		type = ecm_db_iface_type_get(interface_list[i]);
 		DEBUG_INFO("Lookup node address, interface @ %d is type: %d\n", i, type);
 
 		switch (type) {
@@ -371,6 +388,7 @@ struct ecm_db_node_instance *ecm_nss_ipv4_node_establish_and_ref(struct ecm_fron
 			DEBUG_TRACE("PPTP interface unsupported\n");
 			return NULL;
 #endif
+
 		case ECM_DB_IFACE_TYPE_MAP_T:
 #ifdef ECM_INTERFACE_MAP_T_ENABLE
 			in = dev_get_by_index(&init_net, skb->skb_iif);
@@ -386,6 +404,60 @@ struct ecm_db_node_instance *ecm_nss_ipv4_node_establish_and_ref(struct ecm_fron
 			DEBUG_TRACE("MAP-T interface unsupported\n");
 			return NULL;
 #endif
+
+		case ECM_DB_IFACE_TYPE_GRE_TUN:
+#ifdef ECM_INTERFACE_GRE_TUN_ENABLE
+			in = dev_get_by_index(&init_net, skb->skb_iif);
+			if (!in) {
+				DEBUG_WARN("failed to obtain node address for host " ECM_IP_ADDR_DOT_FMT "\n", ECM_IP_ADDR_TO_DOT(addr));
+				return NULL;
+			}
+
+			switch(in->type) {
+			case ARPHRD_IPGRE:
+				gre4_tunnel = netdev_priv(in);
+				if (!gre4_tunnel) {
+					dev_put(in);
+					DEBUG_WARN("failed to obtain node address for host. GREv4 tunnel not initialized\n");
+					return NULL;
+				}
+				ECM_NIN4_ADDR_TO_IP_ADDR(local_gre_tun_ip, gre4_tunnel->parms.iph.saddr);
+				dev_put(in);
+				in = ecm_interface_dev_find_by_local_addr(local_gre_tun_ip);
+				if (!in) {
+					DEBUG_WARN("failed to obtain node address for host " ECM_IP_ADDR_DOT_FMT "\n", ECM_IP_ADDR_TO_DOT(local_gre_tun_ip));
+					return NULL;
+				}
+				break;
+
+			case ARPHRD_IP6GRE:
+				gre6_tunnel = netdev_priv(in);
+				if (!gre6_tunnel) {
+					dev_put(in);
+					DEBUG_WARN("failed to obtain node address for host. GREv6 tunnel not initialized\n");
+					return NULL;
+				}
+				ECM_NIN6_ADDR_TO_IP_ADDR(local_gre_tun_ip, gre6_tunnel->parms.laddr);
+				dev_put(in);
+				in = ecm_interface_dev_find_by_local_addr(local_gre_tun_ip);
+				if (!in) {
+					DEBUG_WARN("failed to obtain node address for host " ECM_IP_ADDR_OCTAL_FMT "\n", ECM_IP_ADDR_TO_OCTAL(local_gre_tun_ip));
+					return NULL;
+				}
+				break;
+
+			default:
+				DEBUG_TRACE("establish node with physical netdev: %s\n", in->name);
+			}
+			memcpy(node_addr, in->dev_addr, ETH_ALEN);
+			dev_put(in);
+			done = true;
+			break;
+#else
+			DEBUG_TRACE("GRE Tunnel interface unsupported\n");
+			return NULL;
+#endif
+
 		case ECM_DB_IFACE_TYPE_VLAN:
 #ifdef ECM_INTERFACE_VLAN_ENABLE
 			/*
@@ -395,9 +467,13 @@ struct ecm_db_node_instance *ecm_nss_ipv4_node_establish_and_ref(struct ecm_fron
 			DEBUG_TRACE("VLAN interface unsupported\n");
 			return NULL;
 #endif
+
 		case ECM_DB_IFACE_TYPE_ETHERNET:
 		case ECM_DB_IFACE_TYPE_LAG:
 		case ECM_DB_IFACE_TYPE_BRIDGE:
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+		case ECM_DB_IFACE_TYPE_OVS_BRIDGE:
+#endif
 		case ECM_DB_IFACE_TYPE_IPSEC_TUNNEL:
 			if (!ecm_interface_mac_addr_get_no_route(dev, addr, node_addr)) {
 				ip_addr_t gw_addr = ECM_IP_ADDR_NULL;
@@ -438,6 +514,59 @@ done:
 			 */
 			done = true;
 			break;
+		case ECM_DB_IFACE_TYPE_RAWIP:
+#ifdef ECM_INTERFACE_RAWIP_ENABLE
+			done = true;
+			break;
+#else
+			DEBUG_TRACE("%p: RAWIP interface unsupported\n", feci);
+			return NULL;
+#endif
+		case ECM_DB_IFACE_TYPE_OVPN:
+#ifdef ECM_INTERFACE_OVPN_ENABLE
+			out_dev = skb_dst(skb)->dev;
+
+			/*
+			 * There is no MAC address for TUN/TAP device.
+			 * Return if skb->dst is TUN/TAP device.
+			 */
+			if (!out_dev || out_dev->priv_flags & IFF_TUN_TAP) {
+				DEBUG_WARN("failed to update node_addr dev = %s, out_dev = %s, node address for host " ECM_IP_ADDR_DOT_FMT "\n",
+						dev->name, out_dev->name, ECM_IP_ADDR_TO_DOT(addr));
+				return NULL;
+			}
+			memcpy(node_addr, out_dev->dev_addr, ETH_ALEN);
+
+			DEBUG_TRACE("dev = %s, out_dev = %s, node address for host " ECM_IP_ADDR_DOT_FMT ", node_addr: %pM\n",
+					dev->name, out_dev->name, ECM_IP_ADDR_TO_DOT(addr), node_addr);
+			done = true;
+			break;
+#else
+			DEBUG_TRACE("OVPN interface unsupported\n");
+			return NULL;
+#endif
+		case ECM_DB_IFACE_TYPE_VXLAN:
+#ifdef ECM_INTERFACE_VXLAN_ENABLE
+			local_dev = ecm_interface_dev_find_by_local_addr(addr);
+			if (!local_dev) {
+				DEBUG_WARN("%p: Failed to find local netdevice of VxLAN tunnel for " ECM_IP_ADDR_DOT_FMT "\n",
+						feci, ECM_IP_ADDR_TO_DOT(addr));
+				return NULL;
+			}
+
+			if (!ecm_interface_mac_addr_get_no_route(local_dev, addr, node_addr)) {
+				DEBUG_WARN("%p: Couldn't find mac address for local dev\n", feci);
+				dev_put(local_dev);
+				return NULL;
+			}
+			DEBUG_TRACE("%p: Found the mac address for local dev\n", feci);
+			dev_put(local_dev);
+			done = true;
+			break;
+#else
+			DEBUG_TRACE("%p: VXLAN interface unsupported\n", feci);
+			return NULL;
+#endif
 		default:
 			/*
 			 * Don't know how to handle these.
@@ -502,7 +631,7 @@ done:
 	 */
 	ecm_db_iface_deref(ii);
 
-	DEBUG_TRACE("%p: node established\n", nni);
+	DEBUG_TRACE("%p: node established, node address: %pM\n", nni, node_addr);
 	return nni;
 }
 
@@ -744,17 +873,17 @@ void ecm_nss_ipv4_connection_regenerate(struct ecm_db_connection_instance *ci, e
 	is_routed = ecm_db_connection_is_routed_get(ci);
 	ecm_dir = ecm_db_connection_direction_get(ci);
 
-	ecm_db_connection_from_address_get(ci, ip_src_addr);
-	ecm_db_connection_from_address_nat_get(ci, ip_src_addr_nat);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_FROM, ip_src_addr);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_FROM_NAT, ip_src_addr_nat);
 
-	ecm_db_connection_to_address_get(ci, ip_dest_addr);
-	ecm_db_connection_to_address_nat_get(ci, ip_dest_addr_nat);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_TO, ip_dest_addr);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_TO_NAT, ip_dest_addr_nat);
 
-	ecm_db_connection_from_node_address_get(ci, src_node_addr);
-	ecm_db_connection_from_nat_node_address_get(ci, src_node_addr_nat);
+	ecm_db_connection_node_address_get(ci, ECM_DB_OBJ_DIR_FROM, src_node_addr);
+	ecm_db_connection_node_address_get(ci, ECM_DB_OBJ_DIR_FROM_NAT, src_node_addr_nat);
 
-	ecm_db_connection_to_node_address_get(ci, dest_node_addr);
-	ecm_db_connection_to_nat_node_address_get(ci, dest_node_addr_nat);
+	ecm_db_connection_node_address_get(ci, ECM_DB_OBJ_DIR_TO, dest_node_addr);
+	ecm_db_connection_node_address_get(ci, ECM_DB_OBJ_DIR_TO_NAT, dest_node_addr_nat);
 
 	feci = ecm_db_connection_front_end_get_and_ref(ci);
 
@@ -775,7 +904,7 @@ void ecm_nss_ipv4_connection_regenerate(struct ecm_db_connection_instance *ci, e
 		goto ecm_ipv4_retry_regen;
 	}
 
-	ecm_db_connection_from_interfaces_reset(ci, from_list, from_list_first);
+	ecm_db_connection_interfaces_reset(ci, from_list, from_list_first, ECM_DB_OBJ_DIR_FROM);
 	ecm_db_connection_interfaces_deref(from_list, from_list_first);
 
 	DEBUG_TRACE("%p: Update the 'from NAT' interface heirarchy list\n", ci);
@@ -790,7 +919,7 @@ void ecm_nss_ipv4_connection_regenerate(struct ecm_db_connection_instance *ci, e
 		goto ecm_ipv4_retry_regen;
 	}
 
-	ecm_db_connection_from_nat_interfaces_reset(ci, from_nat_list, from_nat_list_first);
+	ecm_db_connection_interfaces_reset(ci, from_nat_list, from_nat_list_first, ECM_DB_OBJ_DIR_FROM_NAT);
 	ecm_db_connection_interfaces_deref(from_nat_list, from_nat_list_first);
 
 	DEBUG_TRACE("%p: Update the 'to' interface heirarchy list\n", ci);
@@ -800,7 +929,7 @@ void ecm_nss_ipv4_connection_regenerate(struct ecm_db_connection_instance *ci, e
 		goto ecm_ipv4_retry_regen;
 	}
 
-	ecm_db_connection_to_interfaces_reset(ci, to_list, to_list_first);
+	ecm_db_connection_interfaces_reset(ci, to_list, to_list_first, ECM_DB_OBJ_DIR_TO);
 	ecm_db_connection_interfaces_deref(to_list, to_list_first);
 
 	DEBUG_TRACE("%p: Update the 'to NAT' interface heirarchy list\n", ci);
@@ -813,7 +942,7 @@ void ecm_nss_ipv4_connection_regenerate(struct ecm_db_connection_instance *ci, e
 	ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
 
 	feci->deref(feci);
-	ecm_db_connection_to_nat_interfaces_reset(ci, to_nat_list, to_nat_list_first);
+	ecm_db_connection_interfaces_reset(ci, to_nat_list, to_nat_list_first, ECM_DB_OBJ_DIR_TO_NAT);
 	ecm_db_connection_interfaces_deref(to_nat_list, to_nat_list_first);
 
 	/*
@@ -869,13 +998,13 @@ ecm_ipv4_regen_done:
 	/*
 	 * Re-generation of state is successful.
 	 */
-	ecm_db_conection_regeneration_completed(ci);
+	ecm_db_connection_regeneration_completed(ci);
 
 	return;
 
 ecm_ipv4_retry_regen:
 	feci->deref(feci);
-	ecm_db_conection_regeneration_failed(ci);
+	ecm_db_connection_regeneration_failed(ci);
 	return;
 }
 
@@ -885,7 +1014,7 @@ ecm_ipv4_retry_regen:
  */
 static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct net_device *in_dev,
 							uint8_t *src_node_addr, uint8_t *dest_node_addr,
-							bool can_accel, bool is_routed, bool is_l2_encap, struct sk_buff *skb)
+							bool can_accel, bool is_routed, bool is_l2_encap, struct sk_buff *skb, uint16_t l2_encap_proto)
 {
 	struct ecm_tracker_ip_header ip_hdr;
         struct nf_conn *ct;
@@ -902,12 +1031,21 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 	struct net_device *in_dev_nat;
 	uint8_t *src_node_addr_nat;
 	uint8_t *dest_node_addr_nat;
+	uint8_t protonum;
 
 	/*
 	 * Obtain the IP header from the skb
 	 */
 	if (!ecm_tracker_ip_check_header_and_read(&ip_hdr, skb)) {
 		DEBUG_WARN("Invalid ip header in skb %p\n", skb);
+		return NF_ACCEPT;
+	}
+
+	/*
+	 * Process only IPv4 packets
+	 */
+	if (!ip_hdr.is_v4) {
+		DEBUG_TRACE("Not an IPv4 packet, skb %p\n", skb);
 		return NF_ACCEPT;
 	}
 
@@ -941,26 +1079,6 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 	}
 
 	/*
-	 * Do not accelerate flows to/from any virtual tunnel or tap devices.
-	 */
-	if ((in_dev->priv_flags_qca_ecm & IFF_QCA_ECM_TUN_TAP) ||
-		(out_dev->priv_flags_qca_ecm & IFF_QCA_ECM_TUN_TAP)) {
-
-		DEBUG_TRACE("virtual tunnels are not accelerated by ECM\n");
-		return NF_ACCEPT;
-	}
-
-	/*
-	 * If it's a PPTP GRE/GRE pass-through flow then check if out_dev or
-	 * in_dev are not a PPTP device. If ecm_interface_is_pptp() return
-	 * false then don't accelerate it.
-	 */
-	if ((ip_hdr.protocol == IPPROTO_GRE) && !ecm_interface_is_pptp(skb, out_dev)) {
-		DEBUG_TRACE("PPTP GRE pass through flow\n");
-		return NF_ACCEPT;
-	}
-
-	/*
 	 * Extract information, if we have conntrack then use that info as far as we can.
 	 */
         ct = nf_ct_get(skb, &ctinfo);
@@ -973,12 +1091,35 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 		reply_tuple.dst.u3.ip = orig_tuple.src.u3.ip;
 		sender = ECM_TRACKER_SENDER_TYPE_SRC;
 	} else {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0))
-		if (unlikely(ct == &nf_conntrack_untracked)) {
+		if (unlikely(ct == nf_ct_untracked_get())) {
+#ifdef ECM_INTERFACE_VXLAN_ENABLE
+			/*
+			 * If the conntrack connection is set as untracked,
+			 * ECM will accept and process only VxLAN outer flows,
+			 * otherwise such flows will not be processed by ECM.
+			 *
+			 * E.g. In the following network arramgement,
+			 * Eth1 ---> Bridge ---> VxLAN0(Bridge Port) ---> Eth0(WAN)
+			 * The packets from VxLAN0 to Eth0 will be routed.
+			 *
+			 * is_vxlan_dev API is used to identify the VxLAN device &
+			 * is_routed flag is used to identify the outer flow.
+			 */
+			if (is_routed && is_vxlan_dev(in_dev)) {
+				DEBUG_TRACE("%p: Untracked CT for VxLAN\n", skb);
+				ECM_IP_ADDR_TO_NIN4_ADDR(orig_tuple.src.u3.ip, ip_hdr.src_addr);
+				ECM_IP_ADDR_TO_NIN4_ADDR(orig_tuple.dst.u3.ip, ip_hdr.dest_addr);
+				orig_tuple.dst.protonum = ip_hdr.protocol;
+				reply_tuple.src.u3.ip = orig_tuple.dst.u3.ip;
+				reply_tuple.dst.u3.ip = orig_tuple.src.u3.ip;
+				sender = ECM_TRACKER_SENDER_TYPE_SRC;
+				ct = NULL;
+				goto vxlan_done;
+			}
+#endif
 			DEBUG_TRACE("%p: ct: untracked\n", skb);
 			return NF_ACCEPT;
 		}
-#endif /*KERNEL_VERSION(4, 12, 0)*/
 
 		/*
 		 * If the conntrack connection is using a helper (i.e. Application Layer Gateway)
@@ -987,15 +1128,6 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 		if (nfct_help(ct)) {
 			DEBUG_TRACE("%p: Connection has helper\n", ct);
 			can_accel = false;
-		}
-
-		/*
-		 * Unconfirmed connection may be dropped by Linux at the final step,
-		 * So we don't process unconfirmed connections.
-		 */
-		if (!nf_ct_is_confirmed(ct)) {
-			DEBUG_TRACE("%p: Unconfirmed connection\n", ct);
-			return NF_ACCEPT;
 		}
 
 		/*
@@ -1022,25 +1154,42 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 			orig_tuple.dst.protonum = ip_hdr.protocol;
 			DEBUG_TRACE("%p: related ct, actual protocol: %u\n", skb, orig_tuple.dst.protonum);
 		}
+#ifdef ECM_INTERFACE_VXLAN_ENABLE
+vxlan_done:
+		;
+#endif
 	}
 
-#ifdef ECM_MULTICAST_ENABLE
+	/*
+	 * Check if we can accelerate the GRE protocol.
+	 */
+	if (ip_hdr.protocol == IPPROTO_GRE) {
+		if (!ecm_front_end_gre_proto_is_accel_allowed(in_dev, out_dev, skb, &orig_tuple, 4)) {
+			DEBUG_WARN("%p: GRE protocol is not allowed\n", skb);
+			return NF_ACCEPT;
+		}
+	}
+
 	/*
 	 * Check for a multicast Destination address here.
 	 */
 	ECM_NIN4_ADDR_TO_IP_ADDR(ip_dest_addr, orig_tuple.dst.u3.ip);
-	if (ecm_ip_addr_is_multicast(ip_dest_addr)  && (skb->pkt_type == PACKET_MULTICAST)) {
-		DEBUG_TRACE("Multicast, Processing: %p\n", skb);
-		return ecm_nss_multicast_ipv4_connection_process(out_dev,
-				in_dev,
-				src_node_addr,
-				dest_node_addr,
-				can_accel, is_routed, skb,
-				&ip_hdr,
-				ct, sender,
-				&orig_tuple, &reply_tuple);
-	}
+	if (ecm_ip_addr_is_multicast(ip_dest_addr)) {
+#ifdef ECM_MULTICAST_ENABLE
+
+		if (unlikely(ecm_front_end_ipv4_mc_stopped)) {
+			DEBUG_TRACE("%p: Multicast disabled by ecm_front_end_ipv4_mc_stopped = %d\n", skb, ecm_front_end_ipv4_mc_stopped);
+			return NF_ACCEPT;
+		}
+
+		DEBUG_TRACE("%p: Multicast, Processing\n", skb);
+		return ecm_nss_multicast_ipv4_connection_process(out_dev, in_dev, src_node_addr, dest_node_addr,
+									can_accel, is_routed, skb, &ip_hdr, ct, sender,
+									&orig_tuple, &reply_tuple);
+#else
+		return NF_ACCEPT;
 #endif
+	}
 
 	/*
 	 * Work out if this packet involves NAT or not.
@@ -1082,7 +1231,23 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 		return NF_ACCEPT;
 	}
 
-	DEBUG_TRACE("IP Packet ORIGINAL src: %pI4 ORIGINAL dst: %pI4 protocol: %u, sender: %d ecm_dir: %d\n", &orig_tuple.src.u3.ip, &orig_tuple.dst.u3.ip, orig_tuple.dst.protonum, sender, ecm_dir);
+	/*
+	 * If PPPoE bridged flows are to be handled with 3-tuple rule, set protocol to IPPROTO_RAW.
+	 */
+	protonum = orig_tuple.dst.protonum;
+
+	if (unlikely(!is_routed && (l2_encap_proto == ETH_P_PPP_SES))) {
+		/*
+		 * Check if PPPoE bridge acceleration is 3-tuple based.
+		 */
+		if (nss_pppoe_get_br_accel_mode() == NSS_PPPOE_BR_ACCEL_MODE_EN_3T) {
+			DEBUG_TRACE("3-tuple acceleration is enabled for PPPoE bridged flows\n");
+			protonum = IPPROTO_RAW;
+		}
+	}
+
+	DEBUG_TRACE("IP Packet ORIGINAL src: %pI4 ORIGINAL dst: %pI4 protocol: %u, sender: %d ecm_dir: %d\n",
+			&orig_tuple.src.u3.ip, &orig_tuple.dst.u3.ip, protonum, sender, ecm_dir);
 
 	/*
 	 * Get IP addressing information.  This same logic is applied when extracting port information too.
@@ -1347,7 +1512,7 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 	 * Process IP specific protocol
 	 * TCP and UDP are the most likliest protocols.
 	 */
-	if (likely(orig_tuple.dst.protonum == IPPROTO_TCP) || likely(orig_tuple.dst.protonum == IPPROTO_UDP)) {
+	if (likely(protonum == IPPROTO_TCP) || likely(protonum == IPPROTO_UDP)) {
 		return ecm_nss_ported_ipv4_process(out_dev, out_dev_nat,
 				in_dev, in_dev_nat,
 				src_node_addr, src_node_addr_nat,
@@ -1356,7 +1521,7 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 				&ip_hdr,
 				ct, sender, ecm_dir,
 				&orig_tuple, &reply_tuple,
-				ip_src_addr, ip_dest_addr, ip_src_addr_nat, ip_dest_addr_nat);
+				ip_src_addr, ip_dest_addr, ip_src_addr_nat, ip_dest_addr_nat, l2_encap_proto);
 	}
 #ifdef ECM_NON_PORTED_SUPPORT_ENABLE
 	return ecm_nss_non_ported_ipv4_process(out_dev, out_dev_nat,
@@ -1367,7 +1532,7 @@ static unsigned int ecm_nss_ipv4_ip_process(struct net_device *out_dev, struct n
 				&ip_hdr,
 				ct, sender, ecm_dir,
 				&orig_tuple, &reply_tuple,
-				ip_src_addr, ip_dest_addr, ip_src_addr_nat, ip_dest_addr_nat);
+				ip_src_addr, ip_dest_addr, ip_src_addr_nat, ip_dest_addr_nat, l2_encap_proto);
 #else
 	return NF_ACCEPT;
 #endif
@@ -1423,19 +1588,6 @@ static unsigned int ecm_nss_ipv4_post_routing_hook(const struct nf_hook_ops *ops
 		return NF_ACCEPT;
 	}
 
-#ifndef ECM_MULTICAST_ENABLE
-	if (skb->pkt_type == PACKET_MULTICAST) {
-		DEBUG_TRACE("Multicast, ignoring: %p\n", skb);
-		return NF_ACCEPT;
-	}
-#else
-	if ((skb->pkt_type == PACKET_MULTICAST) && unlikely(ecm_front_end_ipv4_mc_stopped)) {
-		DEBUG_TRACE("Multicast frontend stopped, ignoring: %p\n", skb);
-		return NF_ACCEPT;
-	}
-#endif
-
-#ifdef ECM_INTERFACE_PPP_ENABLE
 #ifndef ECM_INTERFACE_PPTP_ENABLE
 	/*
 	 * skip pptp because we don't accelerate them
@@ -1444,23 +1596,22 @@ static unsigned int ecm_nss_ipv4_post_routing_hook(const struct nf_hook_ops *ops
 		return NF_ACCEPT;
 	}
 #endif
+
 #ifndef ECM_INTERFACE_L2TPV2_ENABLE
 	/*
-	 * skip l2tp v2 and v3, because we don't accelerate them
+	 * skip l2tpv2 because we don't accelerate them
 	 */
-	if (ecm_interface_is_l2tp_packet_by_version(skb, out, 2) ||
-		ecm_interface_is_l2tp_packet_by_version(skb, out, 3)) {
+	if (ecm_interface_is_l2tp_packet_by_version(skb, out, 2)) {
 		return NF_ACCEPT;
 	}
-#else
+#endif
+
 	/*
 	 * skip l2tpv3 because we don't accelerate them
 	 */
 	if (ecm_interface_is_l2tp_packet_by_version(skb, out, 3)) {
 		return NF_ACCEPT;
 	}
-#endif
-#endif
 
 	/*
 	 * Identify interface from where this packet came
@@ -1473,9 +1624,19 @@ static unsigned int ecm_nss_ipv4_post_routing_hook(const struct nf_hook_ops *ops
 		return NF_ACCEPT;
 	}
 
+#ifndef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+	/*
+	 * skip OpenVSwitch flows because we don't accelerate them
+	 */
+	if (netif_is_ovs_master(out) || netif_is_ovs_master(in)) {
+		dev_put(in);
+		return NF_ACCEPT;
+	}
+#endif
+
 	DEBUG_TRACE("Post routing process skb %p, out: %p (%s), in: %p (%s)\n", skb, out, out->name, in, in->name);
 	result = ecm_nss_ipv4_ip_process((struct net_device *)out, in, NULL, NULL,
-							can_accel, true, false, skb);
+							can_accel, true, false, skb, 0);
 	dev_put(in);
 	return result;
 }
@@ -1491,6 +1652,7 @@ static unsigned int ecm_front_end_ipv4_pppoe_bridge_process(struct net_device *o
 						     bool can_accel,
 						     struct sk_buff *skb)
 {
+	struct ecm_tracker_ip_header ip_hdr;
 	unsigned int result = NF_ACCEPT;
 	struct pppoe_hdr *ph = pppoe_hdr(skb);
 	uint16_t ppp_proto = *(uint16_t *)ph->tag;
@@ -1501,14 +1663,27 @@ static unsigned int ecm_front_end_ipv4_pppoe_bridge_process(struct net_device *o
 		return NF_ACCEPT;
 	}
 
-	encap_header_len = ecm_front_end_l2_encap_header_len(skb);
+	encap_header_len = ecm_front_end_l2_encap_header_len(ntohs(skb->protocol));
 	ecm_front_end_pull_l2_encap_header(skb, encap_header_len);
 	skb->protocol = htons(ETH_P_IP);
 
+	if (!ecm_tracker_ip_check_header_and_read(&ip_hdr, skb)) {
+		DEBUG_WARN("Invalid ip header in skb %p\n", skb);
+		goto skip_ipv4_process;
+	}
+
+	/*
+	 * Return if destination IP address is multicast address.
+	 */
+	if (ecm_ip_addr_is_multicast(ip_hdr.dest_addr)) {
+		DEBUG_WARN("Multicast acceleration is not support in PPPoE bridge %p\n", skb);
+		goto skip_ipv4_process;
+	}
+
 	result = ecm_nss_ipv4_ip_process(out, in, skb_eth_hdr->h_source,
 					 skb_eth_hdr->h_dest, can_accel,
-					 false, true, skb);
-
+					 false, true, skb, ETH_P_PPP_SES);
+skip_ipv4_process:
 	ecm_front_end_push_l2_encap_header(skb, encap_header_len);
 	skb->protocol = htons(ETH_P_PPP_SES);
 
@@ -1548,7 +1723,7 @@ static unsigned int ecm_nss_ipv4_bridge_post_routing_hook(const struct nf_hook_o
 	struct net_device *bridge;
 	struct net_device *in;
 	bool can_accel = true;
-	unsigned int result;
+	unsigned int result = NF_ACCEPT;
 
 	DEBUG_TRACE("%p: Bridge: %s\n", out, out->name);
 
@@ -1571,26 +1746,12 @@ static unsigned int ecm_nss_ipv4_bridge_post_routing_hook(const struct nf_hook_o
 		return NF_ACCEPT;
 	}
 
-#ifndef ECM_MULTICAST_ENABLE
-	if (skb->pkt_type == PACKET_MULTICAST) {
-		DEBUG_TRACE("Multicast, ignoring: %p\n", skb);
-		return NF_ACCEPT;
-	}
-#else
-	if ((skb->pkt_type == PACKET_MULTICAST) && unlikely(ecm_front_end_ipv4_mc_stopped)) {
-		DEBUG_TRACE("Multicast frontend stopped, ignoring: %p\n", skb);
-		return NF_ACCEPT;
-	}
-#endif
-
-#ifdef ECM_INTERFACE_PPP_ENABLE
 	/*
 	 * skip l2tp/pptp because we don't accelerate them
 	 */
 	if (ecm_interface_is_l2tp_pptp(skb, out)) {
 		return NF_ACCEPT;
 	}
-#endif
 
 	/*
 	 * Check packet is an IP Ethernet packet
@@ -1602,7 +1763,7 @@ static unsigned int ecm_nss_ipv4_bridge_post_routing_hook(const struct nf_hook_o
 	}
 	eth_type = ntohs(skb_eth_hdr->h_proto);
 	if (unlikely((eth_type != 0x0800) && (eth_type != ETH_P_PPP_SES))) {
-		DEBUG_TRACE("%p: Not IP/PPPoE session\n", skb);
+		DEBUG_TRACE("%p: Not IP/PPPoE session: %d\n", skb, eth_type);
 		return NF_ACCEPT;
 	}
 
@@ -1650,18 +1811,14 @@ static unsigned int ecm_nss_ipv4_bridge_post_routing_hook(const struct nf_hook_o
 	}
 	if (in == out) {
 		DEBUG_TRACE("skb: %p, bridge: %p (%s), port bounce on %p (%s)\n", skb, bridge, bridge->name, out, out->name);
-		dev_put(in);
-		dev_put(bridge);
-		return NF_ACCEPT;
+		goto skip_ipv4_bridge_flow;
 	}
 	if (!ecm_mac_addr_equal(skb_eth_hdr->h_source, bridge->dev_addr)) {
 		/*
 		 * Case 2: Routed trafffic would be handled by the INET post routing.
 		 */
 		DEBUG_TRACE("skb: %p, Ignoring routed packet to bridge: %p (%s)\n", skb, bridge, bridge->name);
-		dev_put(in);
-		dev_put(bridge);
-		return NF_ACCEPT;
+		goto skip_ipv4_bridge_flow;
 	}
 
 	if (!is_multicast_ether_addr(skb_eth_hdr->h_dest)) {
@@ -1677,28 +1834,101 @@ static unsigned int ecm_nss_ipv4_bridge_post_routing_hook(const struct nf_hook_o
 #endif
 			DEBUG_WARN("skb: %p, No fdb entry for this mac address %pM in the bridge: %p (%s)\n",
 					skb, skb_eth_hdr->h_dest, bridge, bridge->name);
-			dev_put(in);
-			dev_put(bridge);
-			return NF_ACCEPT;
+			goto skip_ipv4_bridge_flow;
 		}
 	}
 	DEBUG_TRACE("Bridge process skb: %p, bridge: %p (%s), In: %p (%s), Out: %p (%s)\n",
 			skb, bridge, bridge->name, in, in->name, out, out->name);
 
 	if (unlikely(eth_type != 0x0800)) {
+		/*
+		 * Check if PPPoE bridge acceleration is disabled.
+		 */
+		if (nss_pppoe_get_br_accel_mode() == NSS_PPPOE_BR_ACCEL_MODE_DIS) {
+			DEBUG_TRACE("skb: %p, PPPoE bridge flow acceleration is disabled\n", skb);
+			goto skip_ipv4_bridge_flow;
+		}
+
 		result = ecm_front_end_ipv4_pppoe_bridge_process((struct net_device *)out, in, skb_eth_hdr, can_accel, skb);
-		dev_put(in);
-		dev_put(bridge);
-		return result;
+		goto skip_ipv4_bridge_flow;
 	}
 
 	result = ecm_nss_ipv4_ip_process((struct net_device *)out, in,
-				skb_eth_hdr->h_source, skb_eth_hdr->h_dest, can_accel, false, false, skb);
-
+				skb_eth_hdr->h_source, skb_eth_hdr->h_dest, can_accel, false, false, skb, 0);
+skip_ipv4_bridge_flow:
 	dev_put(in);
 	dev_put(bridge);
 	return result;
 }
+
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+/*
+ * ecm_nss_ipv4_ovs_dp_process()
+ *      Process OVS IPv4 bridged packets.
+ */
+unsigned int ecm_nss_ipv4_ovs_dp_process(struct sk_buff *skb, struct net_device *out)
+{
+        struct ethhdr *skb_eth_hdr;
+        bool can_accel = true;
+        struct net_device *in;
+
+	/*
+	 * Don't process broadcast.
+	 */
+	if (skb->pkt_type == PACKET_BROADCAST) {
+		DEBUG_TRACE("Broadcast, ignoring: %p\n", skb);
+		return 1;
+	}
+
+	if (skb->protocol != ntohs(ETH_P_IP)) {
+		DEBUG_WARN("%p: Wrong skb protocol: %d", skb, skb->protocol);
+		return 1;
+	}
+
+        skb_eth_hdr = eth_hdr(skb);
+        if (!skb_eth_hdr) {
+                DEBUG_WARN("%p: Not Eth\n", skb);
+                return 1;
+        }
+
+        in = dev_get_by_index(&init_net, skb->skb_iif);
+        if (!in) {
+                DEBUG_WARN("%p: No in device\n", skb);
+                return 1;
+        }
+
+        DEBUG_TRACE("%p: in: %s out: %s skb->protocol: %x\n", skb, in->name, out->name, skb->protocol);
+
+	if (netif_is_ovs_master(in)) {
+		if (!ecm_mac_addr_equal(skb_eth_hdr->h_dest, in->dev_addr)) {
+			DEBUG_TRACE("%p: in is bridge and mac address equals to packet dest, flow is routed, ignore \n", skb);
+			dev_put(in);
+			return 1;
+		}
+	}
+
+	if (netif_is_ovs_master(out)) {
+		if (!ecm_mac_addr_equal(skb_eth_hdr->h_source, out->dev_addr)) {
+			DEBUG_TRACE("%p: out is bridge and mac address equals to packet source, flow is routed, ignore \n", skb);
+			dev_put(in);
+			return 1;
+		}
+	}
+
+        ecm_nss_ipv4_ip_process((struct net_device *)out, in,
+                                skb_eth_hdr->h_source, skb_eth_hdr->h_dest, can_accel, false, false, skb, ETH_P_IP);
+
+        dev_put(in);
+
+        return 0;
+}
+
+static struct ovsmgr_dp_hook_ops ecm_nss_ipv4_dp_hooks = {
+	.protocol = 4,
+	.hook_num = OVSMGR_DP_HOOK_POST_FLOW_PROC,
+	.hook = ecm_nss_ipv4_ovs_dp_process,
+};
+#endif
 
 /*
  * ecm_nss_ipv4_process_one_conn_sync_msg()
@@ -1724,6 +1954,8 @@ static inline void ecm_nss_ipv4_process_one_conn_sync_msg(struct nss_ipv4_conn_s
 	struct ecm_classifier_rule_sync class_sync;
 	int flow_dir;
 	int return_dir;
+	unsigned long int delta_jiffies;
+	int elapsed;
 
 	/*
 	 * Look up ecm connection with a view to synchronising the connection, classifier and data tracker.
@@ -1767,9 +1999,24 @@ static inline void ecm_nss_ipv4_process_one_conn_sync_msg(struct nss_ipv4_conn_s
 #endif
 	if (!ci) {
 		DEBUG_TRACE("%p: NSS Sync: no connection\n", sync);
-		goto sync_conntrack;
+		return;
 	}
+
 	DEBUG_TRACE("%p: Sync conn %p\n", sync, ci);
+
+	/*
+	 * Get the elapsed time since the last sync and add this elapsed time
+	 * to the conntrack's timeout while updating it. If the return value is
+	 * a negative value which means the timer is not in a valid state, just
+	 * return here and do not update the defunct timer and the conntrack.
+	 */
+	elapsed = ecm_db_connection_elapsed_defunct_timer(ci);
+	if (elapsed < 0) {
+		ecm_db_connection_deref(ci);
+		return;
+	}
+	DEBUG_TRACE("%p: elapsed: %d\n", ci, elapsed);
+	delta_jiffies = elapsed * HZ;
 
 	/*
 	 * Keep connection alive and updated
@@ -1864,8 +2111,14 @@ static inline void ecm_nss_ipv4_process_one_conn_sync_msg(struct nss_ipv4_conn_s
 	 * Copy the sync data to the classifier sync structure to
 	 * update the classifiers' stats.
 	 */
-	class_sync.flow_tx_packet_count = sync->flow_tx_packet_count;
-	class_sync.return_tx_packet_count = sync->return_tx_packet_count;
+	class_sync.tx_packet_count[ECM_CONN_DIR_FLOW] = sync->flow_tx_packet_count;
+	class_sync.tx_byte_count[ECM_CONN_DIR_FLOW] = sync->flow_tx_byte_count;
+	class_sync.rx_packet_count[ECM_CONN_DIR_FLOW] = sync->flow_rx_packet_count;
+	class_sync.rx_byte_count[ECM_CONN_DIR_FLOW] = sync->flow_rx_byte_count;
+	class_sync.tx_packet_count[ECM_CONN_DIR_RETURN] = sync->return_tx_packet_count;
+	class_sync.tx_byte_count[ECM_CONN_DIR_RETURN] = sync->return_tx_byte_count;
+	class_sync.rx_packet_count[ECM_CONN_DIR_RETURN] = sync->return_rx_packet_count;
+	class_sync.rx_byte_count[ECM_CONN_DIR_RETURN] = sync->return_rx_byte_count;
 	class_sync.reason = sync->reason;
 
 	/*
@@ -2003,34 +2256,18 @@ sync_conntrack:
 	}
 
 	ct = nf_ct_tuplehash_to_ctrack(h);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
 	NF_CT_ASSERT(ct->timeout.data == (unsigned long)ct);
-#endif /*KERNEL_VERSION(4, 9, 0)*/
 	DEBUG_TRACE("%p: NSS Sync: conntrack connection\n", ct);
 
 	ecm_front_end_flow_and_return_directions_get(ct, flow_ip, 4, &flow_dir, &return_dir);
 
 	/*
 	 * Only update if this is not a fixed timeout
+	 * delta_jiffies is the elapsed time since the last sync of this connection.
 	 */
 	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
-		unsigned long int delta_jiffies;
-
-		/*
-		 * Convert ms ticks from the NSS to jiffies.  We know that inc_ticks is small
-		 * and we expect HZ to be small too so we can multiply without worrying about
-		 * wrap-around problems.  We add a rounding constant to ensure that the different
-		 * time bases don't cause truncation errors.
-		 */
-		DEBUG_ASSERT(HZ <= 100000, "Bad HZ\n");
-		delta_jiffies = ((sync->inc_ticks * HZ) + (MSEC_PER_SEC / 2)) / MSEC_PER_SEC;
-
 		spin_lock_bh(&ct->lock);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
-		ct->timeout += delta_jiffies;
-#else
 		ct->timeout.expires += delta_jiffies;
-#endif /*KERNEL_VERSION(4, 9, 0)*/
 		spin_unlock_bh(&ct->lock);
 	}
 
@@ -2088,26 +2325,17 @@ sync_conntrack:
 			u_int64_t reply_pkts = atomic64_read(&acct[IP_CT_DIR_REPLY].packets);
 
 			if (reply_pkts != 0) {
+				struct nf_conntrack_l4proto *l4proto;
 				unsigned int *timeouts;
 
 				set_bit(IPS_SEEN_REPLY_BIT, &ct->status);
 				set_bit(IPS_ASSURED_BIT, &ct->status);
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
-				timeouts = nf_ct_timeout_lookup(ct);
-#else
-				struct nf_conntrack_l4proto *l4proto;
-
 				l4proto = __nf_ct_l4proto_find(AF_INET, IPPROTO_UDP);
 				timeouts = nf_ct_timeout_lookup(&init_net, ct, l4proto);
-#endif /*KERNEL_VERSION(4, 19, 0)*/
 
 				spin_lock_bh(&ct->lock);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
-				ct->timeout = jiffies + timeouts[UDP_CT_REPLIED];
-#else
 				ct->timeout.expires = jiffies + timeouts[UDP_CT_REPLIED];
-#endif /*KERNEL_VERSION(4, 9, 0)*/
 				spin_unlock_bh(&ct->lock);
 			}
 		}
@@ -2132,7 +2360,6 @@ static void ecm_nss_ipv4_net_dev_callback(void *app_data, struct nss_ipv4_msg *n
 	 * Only respond to sync messages
 	 */
 	if (nim->cm.type != NSS_IPV4_RX_CONN_STATS_SYNC_MSG) {
-		DEBUG_TRACE("Ignoring nim: %p - not sync: %d", nim, nim->cm.type);
 		return;
 	}
 	sync = &nim->msg.conn_stats;
@@ -2185,12 +2412,15 @@ static void ecm_nss_ipv4_stats_sync_req_work(struct work_struct *work)
 	int retry = 3;
 	unsigned long int current_jiffies;
 
+	spin_lock_bh(&ecm_nss_ipv4_lock);
 	if (ecm_nss_ipv4_accelerated_count == 0) {
+		spin_unlock_bh(&ecm_nss_ipv4_lock);
 		DEBUG_TRACE("There is no accelerated IPv4 connection\n");
 		goto reschedule;
 	}
+	spin_unlock_bh(&ecm_nss_ipv4_lock);
 
-	msleep_interruptible(ECM_NSS_IPV4_STATS_SYNC_UDELAY / 1000);
+	usleep_range(ECM_NSS_IPV4_STATS_SYNC_UDELAY - 100, ECM_NSS_IPV4_STATS_SYNC_UDELAY);
 
 	/*
 	 * If index is 0, we are starting a new round, but if we still have time remain
@@ -2204,7 +2434,7 @@ static void ecm_nss_ipv4_stats_sync_req_work(struct work_struct *work)
 		}
 
 		if (ecm_nss_ipv4_next_req_time > current_jiffies) {
-			msleep_interruptible(jiffies_to_msecs(ecm_nss_ipv4_next_req_time - current_jiffies));
+			msleep(jiffies_to_msecs(ecm_nss_ipv4_next_req_time - current_jiffies));
 		}
 		ecm_nss_ipv4_roll_check_jiffies = jiffies;
 		ecm_nss_ipv4_next_req_time = ecm_nss_ipv4_roll_check_jiffies + ECM_NSS_IPV4_STATS_SYNC_PERIOD;
@@ -2592,6 +2822,12 @@ int ecm_nss_ipv4_init(struct dentry *dentry)
 		goto task_cleanup;
 	}
 
+	if (!debugfs_create_u32("vlan_passthrough_set", S_IRUGO | S_IWUSR, ecm_nss_ipv4_dentry,
+					(u32 *)&ecm_nss_ipv4_vlan_passthrough_enable)) {
+		DEBUG_ERROR("Failed to create ecm nss ipv4 vlan passthrough file in debugfs\n");
+		goto task_cleanup;
+	}
+
 #ifdef ECM_NON_PORTED_SUPPORT_ENABLE
 	if (!ecm_nss_non_ported_ipv4_debugfs_init(ecm_nss_ipv4_dentry)) {
 		DEBUG_ERROR("Failed to create ecm non-ported files in debugfs\n");
@@ -2616,7 +2852,7 @@ int ecm_nss_ipv4_init(struct dentry *dentry)
 	/*
 	 * Register netfilter hooks
 	 */
-	result = nf_register_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks, ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
+	result = nf_register_hooks(ecm_nss_ipv4_netfilter_hooks, ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 	if (result < 0) {
 		DEBUG_ERROR("Can't register netfilter hooks.\n");
 		nss_ipv4_notify_unregister();
@@ -2628,7 +2864,7 @@ int ecm_nss_ipv4_init(struct dentry *dentry)
 	if (result < 0) {
 		DEBUG_ERROR("Failed to init ecm ipv4 multicast frontend\n");
 		nss_ipv4_notify_unregister();
-		nf_unregister_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks,
+		nf_unregister_hooks(ecm_nss_ipv4_netfilter_hooks,
 				ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 		goto task_cleanup;
 	}
@@ -2640,11 +2876,14 @@ int ecm_nss_ipv4_init(struct dentry *dentry)
 #ifdef ECM_MULTICAST_ENABLE
 		ecm_nss_multicast_ipv4_exit();
 #endif
-		nf_unregister_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks,
+		nf_unregister_hooks(ecm_nss_ipv4_netfilter_hooks,
 				ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 		goto task_cleanup;
 	}
 
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+	ovsmgr_dp_hook_register(&ecm_nss_ipv4_dp_hooks);
+#endif
 	return 0;
 
 task_cleanup:
@@ -2668,7 +2907,7 @@ void ecm_nss_ipv4_exit(void)
 	/*
 	 * Stop the network stack hooks
 	 */
-	nf_unregister_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks,
+	nf_unregister_hooks(ecm_nss_ipv4_netfilter_hooks,
 			    ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 
 	/*
@@ -2691,5 +2930,9 @@ void ecm_nss_ipv4_exit(void)
 	 * Clean up the stats sync queue/work
 	 */
 	ecm_nss_ipv4_sync_queue_exit();
+
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+	ovsmgr_dp_hook_unregister(&ecm_nss_ipv4_dp_hooks);
+#endif
 }
 EXPORT_SYMBOL(ecm_nss_ipv4_exit);

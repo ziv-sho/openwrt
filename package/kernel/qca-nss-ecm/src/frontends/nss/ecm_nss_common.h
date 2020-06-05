@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2015, The Linux Foundation.  All rights reserved.
+ * Copyright (c) 2015, 2018-2020, The Linux Foundation.  All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -14,12 +14,21 @@
  **************************************************************************
  */
 
-/*
- * Some constants used with constructing NSS acceleration rules.
- * GGG TODO These should be provided by the NSS driver itself!
- */
-#define ECM_NSS_CONNMGR_VLAN_ID_NOT_CONFIGURED 0xFFF
-#define ECM_NSS_CONNMGR_VLAN_MARKING_NOT_CONFIGURED 0xFFFF
+#ifdef ECM_INTERFACE_MAP_T_ENABLE
+#include <nat46-core.h>
+#endif
+
+#ifdef ECM_INTERFACE_IPSEC_ENABLE
+#ifdef ECM_INTERFACE_IPSEC_GLUE_LAYER_SUPPORT_ENABLE
+#include "nss_ipsec_cmn.h"
+#else
+#include "nss_ipsec.h"
+#endif
+#endif
+
+#ifdef ECM_INTERFACE_VXLAN_ENABLE
+#include <net/vxlan.h>
+#endif
 
 /*
  * This macro converts ECM ip_addr_t to NSS IPv6 address
@@ -57,10 +66,42 @@ static inline int32_t ecm_nss_common_get_interface_number_by_dev(struct net_devi
 	 * nss_interface_num for all IPsec tunnels will always be the one specific to acceleration engine.
 	 */
 	if (dev->type == ECM_ARPHRD_IPSEC_TUNNEL_TYPE) {
-		return ECM_INTERFACE_IPSEC_IF_NUM;
+		return NSS_IPSEC_CMN_INTERFACE;
+	}
+
+	if (dev->type == ARPHRD_RAWIP) {
+		return nss_rmnet_rx_get_ifnum(dev);
 	}
 
 	return nss_cmn_get_interface_number_by_dev(dev);
+}
+
+/*
+ * ecm_nss_common_get_interface_number_by_dev_type()
+ *	Returns the acceleration engine interface number based on the net_device object and type.
+ */
+static inline int32_t ecm_nss_common_get_interface_number_by_dev_type(struct net_device *dev, uint32_t type)
+{
+	/*
+	 * nss_interface_num for all IPsec tunnels will always be the one specific to acceleration engine.
+	 */
+	if ((dev->type == ECM_ARPHRD_IPSEC_TUNNEL_TYPE) && !type) {
+		return NSS_IPSEC_CMN_INTERFACE;
+	}
+
+#ifdef ECM_INTERFACE_VXLAN_ENABLE
+	/*
+	 * Find VxLAN dev type based on type, 0 for outer & 1 for inner.
+	 */
+	if (is_vxlan_dev(dev)) {
+		if (!type) {
+			return NSS_VXLAN_INTERFACE;
+		}
+		type = NSS_DYNAMIC_INTERFACE_TYPE_VXLAN_INNER;
+	}
+#endif
+
+	return nss_cmn_get_interface_number_by_dev_and_type(dev, type);
 }
 
 /*
@@ -76,3 +117,182 @@ static inline void ecm_nss_common_connection_regenerate(struct ecm_front_end_con
 	 */
 	ecm_db_connection_regeneration_needed(ci);
 }
+
+/*
+ * ecm_nss_common_get_interface_type()
+ *	Gets the NSS interface type based on some features.
+ *
+ * TODO: For now the feature is the IP version and the net device type. It can be changed
+ * in the future for other needs.
+ */
+static inline int32_t ecm_nss_common_get_interface_type(struct ecm_front_end_connection_instance *feci, struct net_device *dev)
+{
+	switch (dev->type) {
+	case ARPHRD_SIT:
+#ifdef ECM_INTERFACE_SIT_ENABLE
+		if (feci->ip_version == 4) {
+			return NSS_DYNAMIC_INTERFACE_TYPE_TUN6RD_OUTER;
+		}
+
+		if (feci->ip_version == 6) {
+			return NSS_DYNAMIC_INTERFACE_TYPE_TUN6RD_INNER;
+		}
+#endif
+		break;
+
+#ifdef ECM_INTERFACE_TUNIPIP6_ENABLE
+	case ARPHRD_TUNNEL6:
+		if (feci->ip_version == 4) {
+			return NSS_DYNAMIC_INTERFACE_TYPE_TUNIPIP6_INNER;
+		}
+
+		if (feci->ip_version == 6) {
+			return NSS_DYNAMIC_INTERFACE_TYPE_TUNIPIP6_OUTER;
+		}
+#endif
+		break;
+
+#ifdef ECM_INTERFACE_GRE_TAP_ENABLE
+	case ARPHRD_ETHER:
+		/*
+		 * If device is not GRETAP then return NONE.
+		 */
+		if (!(dev->priv_flags & (IFF_GRE_V4_TAP | IFF_GRE_V6_TAP))) {
+			break;
+		}
+#endif
+#ifdef ECM_INTERFACE_GRE_TUN_ENABLE
+	case ARPHRD_IPGRE:
+	case ARPHRD_IP6GRE:
+#endif
+#if defined(ECM_INTERFACE_GRE_TAP_ENABLE) || defined(ECM_INTERFACE_GRE_TUN_ENABLE)
+		if (feci->protocol == IPPROTO_GRE) {
+			return NSS_DYNAMIC_INTERFACE_TYPE_GRE_OUTER;
+		}
+
+		return NSS_DYNAMIC_INTERFACE_TYPE_GRE_INNER;
+#endif
+	case ARPHRD_NONE:
+#ifdef ECM_INTERFACE_MAP_T_ENABLE
+		if (is_map_t_dev(dev)) {
+			if (feci->ip_version == 4) {
+				return NSS_DYNAMIC_INTERFACE_TYPE_MAP_T_INNER;
+			}
+
+			if (feci->ip_version == 6) {
+				return NSS_DYNAMIC_INTERFACE_TYPE_MAP_T_OUTER;
+			}
+		}
+#endif
+		break;
+	case ARPHRD_PPP:
+#ifdef ECM_INTERFACE_PPTP_ENABLE
+		if (dev->priv_flags & IFF_PPP_PPTP) {
+			if (feci->protocol == IPPROTO_GRE) {
+				return NSS_DYNAMIC_INTERFACE_TYPE_PPTP_OUTER;
+			}
+
+			return NSS_DYNAMIC_INTERFACE_TYPE_PPTP_INNER;
+		}
+#endif
+		break;
+	default:
+		break;
+	}
+
+	/*
+	 * By default.
+	 */
+	return NSS_DYNAMIC_INTERFACE_TYPE_NONE;
+}
+
+#ifdef ECM_INTERFACE_IPSEC_ENABLE
+/*
+ * ecm_nss_common_ipsec_get_ifnum()
+ *     Get ipsec specific interface number appended with coreid
+ */
+static inline int32_t ecm_nss_common_ipsec_get_ifnum(int32_t ifnum)
+{
+#ifdef ECM_INTERFACE_IPSEC_GLUE_LAYER_SUPPORT_ENABLE
+	return nss_ipsec_cmn_get_ifnum_with_coreid(ifnum);
+#else
+	return nss_ipsec_get_ifnum(ifnum);
+#endif
+}
+#endif
+
+#ifdef CONFIG_NET_CLS_ACT
+/*
+ * ecm_nss_common_igs_acceleration_is_allowed()
+ *	Return true, if flow acceleration is allowed for an IGS interface.
+ */
+static inline bool ecm_nss_common_igs_acceleration_is_allowed(struct ecm_front_end_connection_instance *feci,
+		struct sk_buff *skb)
+{
+	struct net_device *to_dev;
+	struct ecm_db_iface_instance *to_ifaces[ECM_DB_IFACE_HEIRARCHY_MAX];
+	enum ip_conntrack_info ctinfo;
+	int to_ifaces_first;
+	uint32_t list_index;
+	bool do_accel = true;
+
+	/*
+	 * Get the interface lists of the connection and check if any interface in the list
+	 * has ingress qdisc attached to it.
+	 */
+	to_ifaces_first = ecm_db_connection_interfaces_get_and_ref(feci->ci, to_ifaces, ECM_DB_OBJ_DIR_TO);
+	if (to_ifaces_first == ECM_DB_IFACE_HEIRARCHY_MAX) {
+		DEBUG_WARN("%p: Accel attempt failed - no interfaces in to_interfaces list!\n", feci);
+		return false;
+	}
+
+	/*
+	 * Reject the flow acceleration if the egress device has ingress qdisc
+	 * attached to it. At these interfaces, the acceleration is only allowed
+	 * when any packet is recieved over them (so that we can able to get the
+	 * correct ingress qostag values from it and fill them in the acceleration rules).
+	 */
+	for (list_index = to_ifaces_first; list_index < ECM_DB_IFACE_HEIRARCHY_MAX; list_index++) {
+		struct ecm_db_iface_instance *ii;
+
+		ii = to_ifaces[list_index];
+		to_dev = dev_get_by_index(&init_net, ecm_db_iface_interface_identifier_get(ii));
+		if (unlikely(!to_dev)) {
+			DEBUG_TRACE("%p: No valid device found for %d index.\n",
+					feci, ecm_db_iface_interface_identifier_get(ii));
+			continue;
+		}
+
+		/*
+		 * Check whether ingress qdisc is attached to the egress device or not.
+		 */
+		if (likely(!(to_dev->ingress_cl_list))) {
+			dev_put(to_dev);
+			continue;
+		}
+
+		/*
+		 * Reject the connection if both side packets are not yet seen.
+		 */
+		nf_ct_get(skb, &ctinfo);
+		if ((ctinfo != IP_CT_ESTABLISHED) &&
+				(ctinfo != IP_CT_ESTABLISHED_REPLY)) {
+			DEBUG_INFO("%p: New flow at ingress device, "
+					"rejecting the acceleration.\n", feci);
+
+			/*
+			 * Deny the acceleration as both side packets are not yet seen.
+			 */
+			do_accel = false;
+		}
+		dev_put(to_dev);
+		break;
+	}
+
+	/*
+	 * Release the resources.
+	 */
+	ecm_db_connection_interfaces_deref(to_ifaces, to_ifaces_first);
+	return do_accel;
+}
+#endif

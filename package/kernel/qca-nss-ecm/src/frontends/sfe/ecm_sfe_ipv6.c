@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2015-2016 The Linux Foundation.  All rights reserved.
+ * Copyright (c) 2015-2020 The Linux Foundation.  All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -84,8 +84,8 @@
 #include "ecm_db_types.h"
 #include "ecm_state.h"
 #include "ecm_tracker.h"
-#include "ecm_classifier.h"
 #include "ecm_front_end_types.h"
+#include "ecm_classifier.h"
 #include "ecm_tracker_datagram.h"
 #include "ecm_tracker_udp.h"
 #include "ecm_tracker_tcp.h"
@@ -197,7 +197,7 @@ struct ecm_db_node_instance *ecm_sfe_ipv6_node_establish_and_ref(struct ecm_fron
 #ifdef ECM_INTERFACE_PPPOE_ENABLE
 		struct ecm_db_interface_info_pppoe pppoe_info;
 #endif
-		type = ecm_db_connection_iface_type_get(interface_list[i]);
+		type = ecm_db_iface_type_get(interface_list[i]);
 		DEBUG_INFO("Lookup node address, interface @ %d is type: %d\n", i, type);
 
 		switch (type) {
@@ -233,6 +233,9 @@ struct ecm_db_node_instance *ecm_sfe_ipv6_node_establish_and_ref(struct ecm_fron
 		case ECM_DB_IFACE_TYPE_ETHERNET:
 		case ECM_DB_IFACE_TYPE_LAG:
 		case ECM_DB_IFACE_TYPE_BRIDGE:
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+		case ECM_DB_IFACE_TYPE_OVS_BRIDGE:
+#endif
 			if (!ecm_interface_mac_addr_get_no_route(dev, addr, node_addr)) {
 				ip_addr_t gw_addr = ECM_IP_ADDR_NULL;
 
@@ -244,7 +247,16 @@ struct ecm_db_node_instance *ecm_sfe_ipv6_node_establish_and_ref(struct ecm_fron
 					return NULL;
 				}
 
-				DEBUG_TRACE("Have a gw address " ECM_IP_ADDR_OCTAL_FMT "\n", ECM_IP_ADDR_TO_OCTAL(gw_addr));
+				/*
+				 * The found gateway address can be all zeros,
+				 * so in this case use the host address.
+				 */
+				if (ECM_IP_ADDR_IS_NULL(gw_addr)) {
+					DEBUG_TRACE("GW address is found as zeros, so use host IP\n");
+					ECM_IP_ADDR_COPY(gw_addr, addr);
+				} else {
+					DEBUG_TRACE("Have a gw address " ECM_IP_ADDR_OCTAL_FMT "\n", ECM_IP_ADDR_TO_OCTAL(gw_addr));
+				}
 
 				if (ecm_interface_mac_addr_get_no_route(dev, gw_addr, node_addr)) {
 					DEBUG_TRACE("Found the mac address for gateway\n");
@@ -255,13 +267,14 @@ struct ecm_db_node_instance *ecm_sfe_ipv6_node_establish_and_ref(struct ecm_fron
 					struct net_device *master;
 					master = ecm_interface_get_and_hold_dev_master(dev);
 					DEBUG_ASSERT(master, "Expected a master\n");
-					ecm_interface_send_neighbour_solicitation(master, addr);
+					ecm_interface_send_neighbour_solicitation(master, gw_addr);
 					dev_put(master);
 				} else {
-					ecm_interface_send_neighbour_solicitation(dev, addr);
+					ecm_interface_send_neighbour_solicitation(dev, gw_addr);
 				}
 
-				DEBUG_TRACE("Failed to obtain mac for host " ECM_IP_ADDR_OCTAL_FMT "\n", ECM_IP_ADDR_TO_OCTAL(addr));
+				DEBUG_TRACE("Failed to obtain mac for host " ECM_IP_ADDR_OCTAL_FMT " gw: " ECM_IP_ADDR_OCTAL_FMT "\n",
+					    ECM_IP_ADDR_TO_OCTAL(addr), ECM_IP_ADDR_TO_OCTAL(gw_addr));
 				return NULL;
 			}
 done:
@@ -564,13 +577,13 @@ void ecm_sfe_ipv6_connection_regenerate(struct ecm_db_connection_instance *ci, e
 	is_routed = ecm_db_connection_is_routed_get(ci);
 	ecm_dir = ecm_db_connection_direction_get(ci);
 
-	ecm_db_connection_from_address_get(ci, ip_src_addr);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_FROM, ip_src_addr);
 
-	ecm_db_connection_to_address_get(ci, ip_dest_addr);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_TO, ip_dest_addr);
 
-	ecm_db_connection_from_node_address_get(ci, src_node_addr);
+	ecm_db_connection_node_address_get(ci, ECM_DB_OBJ_DIR_FROM, src_node_addr);
 
-	ecm_db_connection_to_node_address_get(ci, dest_node_addr);
+	ecm_db_connection_node_address_get(ci, ECM_DB_OBJ_DIR_TO, dest_node_addr);
 
 	feci = ecm_db_connection_front_end_get_and_ref(ci);
 
@@ -590,7 +603,7 @@ void ecm_sfe_ipv6_connection_regenerate(struct ecm_db_connection_instance *ci, e
 		goto ecm_ipv6_retry_regen;
 	}
 
-	ecm_db_connection_from_interfaces_reset(ci, from_list, from_list_first);
+	ecm_db_connection_interfaces_reset(ci, from_list, from_list_first, ECM_DB_OBJ_DIR_FROM);
 	ecm_db_connection_interfaces_deref(from_list, from_list_first);
 
 	DEBUG_TRACE("%p: Update the 'to' interface heirarchy list\n", ci);
@@ -603,7 +616,7 @@ void ecm_sfe_ipv6_connection_regenerate(struct ecm_db_connection_instance *ci, e
 	ecm_front_end_ipv6_interface_construct_netdev_put(&efeici);
 
 	feci->deref(feci);
-	ecm_db_connection_to_interfaces_reset(ci, to_list, to_list_first);
+	ecm_db_connection_interfaces_reset(ci, to_list, to_list_first, ECM_DB_OBJ_DIR_TO);
 	ecm_db_connection_interfaces_deref(to_list, to_list_first);
 
 	/*
@@ -656,13 +669,13 @@ ecm_ipv6_regen_done:
 	/*
 	 * Re-generation of state is successful.
 	 */
-	ecm_db_conection_regeneration_completed(ci);
+	ecm_db_connection_regeneration_completed(ci);
 
 	return;
 
 ecm_ipv6_retry_regen:
 	feci->deref(feci);
-	ecm_db_conection_regeneration_failed(ci);
+	ecm_db_connection_regeneration_failed(ci);
 	return;
 }
 
@@ -703,12 +716,7 @@ static unsigned int ecm_sfe_ipv6_ip_process(struct net_device *out_dev, struct n
 	 * If skb_dst(skb)->xfrm is not null, packet is to be encrypted by ipsec, we can't accelerate it.
 	 * If skb->sp is not null, packet is decrypted by ipsec. We only accelerate it when configuration didn't reject ipsec.
 	 */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0))
-	if (unlikely((skb_dst(skb) && skb_dst(skb)->xfrm) ||
-		(ecm_sfe_ipv6_reject_acceleration_for_ipsec && skb_ext_exist(skb, SKB_EXT_SEC_PATH)))) {
-#else
 	if (unlikely((skb_dst(skb) && skb_dst(skb)->xfrm) || (ecm_sfe_ipv6_reject_acceleration_for_ipsec && skb->sp))) {
-#endif /*KERNEL_VERSION(5, 0, 0)*/
 		DEBUG_TRACE("skip local ipsec flows\n");
 		return NF_ACCEPT;
 	}
@@ -727,12 +735,10 @@ static unsigned int ecm_sfe_ipv6_ip_process(struct net_device *out_dev, struct n
 		ECM_IP_ADDR_TO_NIN6_ADDR(reply_tuple.dst.u3.in6, ip_hdr.src_addr);
 		sender = ECM_TRACKER_SENDER_TYPE_SRC;
 	} else {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0))
-		if (unlikely(ct == &nf_conntrack_untracked)) {
+		if (unlikely(ct == nf_ct_untracked_get())) {
 			DEBUG_TRACE("%p: ct: untracked\n", skb);
 			return NF_ACCEPT;
 		}
-#endif /*KERNEL_VERSION(4, 12, 0)*/
 
 		/*
 		 * If the conntrack connection is using a helper (i.e. Application Layer Gateway)
@@ -741,15 +747,6 @@ static unsigned int ecm_sfe_ipv6_ip_process(struct net_device *out_dev, struct n
 		if (nfct_help(ct)) {
 			DEBUG_TRACE("%p: Connection has helper\n", ct);
 			can_accel = false;
-		}
-
-		/*
-		 * Unconfirmed connection may be dropped by Linux at the final step,
-		 * So we don't process unconfirmed connections.
-		 */
-		if (!nf_ct_is_confirmed(ct)) {
-			DEBUG_TRACE("%p: Unconfirmed connection\n", ct);
-			return NF_ACCEPT;
 		}
 
 		/*
@@ -945,14 +942,12 @@ static unsigned int ecm_sfe_ipv6_post_routing_hook(const struct nf_hook_ops *ops
 	}
 #endif
 
-#ifdef ECM_INTERFACE_PPPOE_ENABLE
 	/*
 	 * skip l2tp/pptp because we don't accelerate them
 	 */
 	if (ecm_interface_is_l2tp_pptp(skb, out)) {
 		return NF_ACCEPT;
 	}
-#endif
 
 	/*
 	 * Identify interface from where this packet came
@@ -1105,8 +1100,14 @@ static void ecm_sfe_ipv6_stats_sync_callback(void *app_data, struct sfe_ipv6_msg
 	 * Copy the sync data to the classifier sync structure to
 	 * update the classifiers' stats.
 	 */
-	class_sync.flow_tx_packet_count = sync->flow_tx_packet_count;
-	class_sync.return_tx_packet_count = sync->return_tx_packet_count;
+	class_sync.tx_packet_count[ECM_CONN_DIR_FLOW] = sync->flow_tx_packet_count;
+	class_sync.tx_byte_count[ECM_CONN_DIR_FLOW] = sync->flow_tx_byte_count;
+	class_sync.rx_packet_count[ECM_CONN_DIR_FLOW] = sync->flow_rx_packet_count;
+	class_sync.rx_byte_count[ECM_CONN_DIR_FLOW] = sync->flow_rx_byte_count;
+	class_sync.tx_packet_count[ECM_CONN_DIR_RETURN] = sync->return_tx_packet_count;
+	class_sync.tx_byte_count[ECM_CONN_DIR_RETURN] = sync->return_tx_byte_count;
+	class_sync.rx_packet_count[ECM_CONN_DIR_RETURN] = sync->return_rx_packet_count;
+	class_sync.rx_byte_count[ECM_CONN_DIR_RETURN] = sync->return_rx_byte_count;
 	class_sync.reason = sync->reason;
 
 	/*
@@ -1129,6 +1130,18 @@ static void ecm_sfe_ipv6_stats_sync_callback(void *app_data, struct sfe_ipv6_msg
 		 * NOTE: We take no action here since that is performed by the destroy message ack.
 		 */
 		DEBUG_INFO("%p: ECM initiated final sync seen: %d\n", ci, sync->reason);
+
+		/*
+		 * If there is no tx/rx packets to update the other linux subsystems, we shouldn't continue
+		 * for the sync message which comes as a final sync for the ECM initiated destroy request.
+		 * Because this means the connection is not active for sometime and adding this delta time
+		 * to the conntrack timeout will update it eventhough there is no traffic for this connection.
+		 */
+		if (!sync->flow_tx_packet_count && !sync->return_tx_packet_count) {
+			feci->deref(feci);
+			ecm_db_connection_deref(ci);
+			return;
+		}
 		break;
 	case SFE_RULE_SYNC_REASON_FLUSH:
 	case SFE_RULE_SYNC_REASON_EVICT:
@@ -1244,9 +1257,7 @@ sync_conntrack:
 	}
 
 	ct = nf_ct_tuplehash_to_ctrack(h);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
 	NF_CT_ASSERT(ct->timeout.data == (unsigned long)ct);
-#endif /*KERNEL_VERSION(4, 9, 0)*/
 	DEBUG_TRACE("%p: SFE Sync: conntrack connection\n", ct);
 
 	ecm_front_end_flow_and_return_directions_get(ct, flow_ip, 6, &flow_dir, &return_dir);
@@ -1258,20 +1269,15 @@ sync_conntrack:
 		unsigned long int delta_jiffies;
 
 		/*
-		 * Convert ms ticks from the SFE to jiffies.  We know that inc_ticks is small
+		 * Convert ms ticks from the SFE to jiffies. We know that inc_ticks is small
 		 * and we expect HZ to be small too so we can multiply without worrying about
 		 * wrap-around problems.  We add a rounding constant to ensure that the different
 		 * time bases don't cause truncation errors.
 		 */
-		DEBUG_ASSERT(HZ <= 100000, "Bad HZ\n");
 		delta_jiffies = ((sync->inc_ticks * HZ) + (MSEC_PER_SEC / 2)) / MSEC_PER_SEC;
 
 		spin_lock_bh(&ct->lock);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
-		ct->timeout += delta_jiffies;
-#else
 		ct->timeout.expires += delta_jiffies;
-#endif /*KERNEL_VERSION(4, 9, 0)*/
 		spin_unlock_bh(&ct->lock);
 	}
 #if (LINUX_VERSION_CODE <= KERNEL_VERSION(3,6,0))
@@ -1328,27 +1334,17 @@ sync_conntrack:
 			u_int64_t reply_pkts = atomic64_read(&acct[IP_CT_DIR_REPLY].packets);
 
 			if (reply_pkts != 0) {
+				struct nf_conntrack_l4proto *l4proto;
 				unsigned int *timeouts;
 
 				set_bit(IPS_SEEN_REPLY_BIT, &ct->status);
 				set_bit(IPS_ASSURED_BIT, &ct->status);
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
-				timeouts = nf_ct_timeout_lookup(ct);
-#else
-				struct nf_conntrack_l4proto *l4proto;
-
 				l4proto = __nf_ct_l4proto_find(AF_INET6, IPPROTO_UDP);
 				timeouts = nf_ct_timeout_lookup(&init_net, ct, l4proto);
-#endif /*KERNEL_VERSION(4, 19, 0)*/
 
 				spin_lock_bh(&ct->lock);
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
-				ct->timeout = jiffies + timeouts[UDP_CT_REPLIED];
-#else
 				ct->timeout.expires = jiffies + timeouts[UDP_CT_REPLIED];
-#endif /*KERNEL_VERSION(4, 9, 0)*/
 				spin_unlock_bh(&ct->lock);
 			}
 		}
@@ -1630,7 +1626,7 @@ int ecm_sfe_ipv6_init(struct dentry *dentry)
 	/*
 	 * Register netfilter hooks
 	 */
-	result = nf_register_net_hooks(&init_net, ecm_sfe_ipv6_netfilter_hooks, ARRAY_SIZE(ecm_sfe_ipv6_netfilter_hooks));
+	result = nf_register_hooks(ecm_sfe_ipv6_netfilter_hooks, ARRAY_SIZE(ecm_sfe_ipv6_netfilter_hooks));
 	if (result < 0) {
 		DEBUG_ERROR("Can't register netfilter hooks.\n");
 		sfe_drv_ipv6_notify_unregister();
@@ -1662,7 +1658,7 @@ void ecm_sfe_ipv6_exit(void)
 	/*
 	 * Stop the network stack hooks
 	 */
-	nf_unregister_net_hooks(&init_net, ecm_sfe_ipv6_netfilter_hooks,
+	nf_unregister_hooks(ecm_sfe_ipv6_netfilter_hooks,
 			    ARRAY_SIZE(ecm_sfe_ipv6_netfilter_hooks));
 
 	/*

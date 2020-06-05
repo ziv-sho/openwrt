@@ -39,8 +39,8 @@
 #include "ecm_db_types.h"
 #include "ecm_state.h"
 #include "ecm_tracker.h"
-#include "ecm_classifier.h"
 #include "ecm_front_end_types.h"
+#include "ecm_classifier.h"
 #include "ecm_tracker_datagram.h"
 #include "ecm_tracker_udp.h"
 #include "ecm_tracker_tcp.h"
@@ -198,11 +198,8 @@ bool ecm_front_end_ipv4_interface_construct_set_and_hold(struct sk_buff *skb, ec
 		DEBUG_TRACE("%p: rt_route_iif: %d\n", rt, rt->rt_route_iif);
 		DEBUG_TRACE("%p: rt_iif: %d (%s)\n", rt, rt->rt_iif, rt_iif_dev->name);
 #endif
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
-		DEBUG_TRACE("%p: rt_gw4: %pI4\n", rt, &rt->rt_gw4);
-#else
 		DEBUG_TRACE("%p: rt_gateway: %pI4\n", rt, &rt->rt_gateway);
-#endif /*KERNEL_VERSION(5, 2, 0)*/
+
 		DEBUG_INFO("ip_src_addr" ECM_IP_ADDR_DOT_FMT "\n", ECM_IP_ADDR_TO_DOT(ip_src_addr));
 		DEBUG_INFO("ip_src_addr_nat" ECM_IP_ADDR_DOT_FMT "\n", ECM_IP_ADDR_TO_DOT(ip_src_addr_nat));
 		DEBUG_INFO("ip_dest_addr" ECM_IP_ADDR_DOT_FMT "\n", ECM_IP_ADDR_TO_DOT(ip_dest_addr));

@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2015-2016 The Linux Foundation.  All rights reserved.
+ * Copyright (c) 2015-2020 The Linux Foundation.  All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -75,9 +75,8 @@
 #include "ecm_db_types.h"
 #include "ecm_state.h"
 #include "ecm_tracker.h"
-#include "ecm_classifier.h"
 #include "ecm_front_end_types.h"
-#include "ecm_front_end_common.h"
+#include "ecm_classifier.h"
 #include "ecm_tracker_datagram.h"
 #include "ecm_tracker_udp.h"
 #include "ecm_tracker_tcp.h"
@@ -87,6 +86,7 @@
 #include "ecm_sfe_ported_ipv4.h"
 #include "ecm_sfe_ipv4.h"
 #include "ecm_sfe_common.h"
+#include "ecm_front_end_common.h"
 
 /*
  * Magic numbers
@@ -395,13 +395,13 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 	/*
 	 * Get the interface lists of the connection, we must have at least one interface in the list to continue
 	 */
-	from_ifaces_first = ecm_db_connection_from_interfaces_get_and_ref(feci->ci, from_ifaces);
+	from_ifaces_first = ecm_db_connection_interfaces_get_and_ref(feci->ci, from_ifaces, ECM_DB_OBJ_DIR_FROM);
 	if (from_ifaces_first == ECM_DB_IFACE_HEIRARCHY_MAX) {
 		DEBUG_WARN("%p: Accel attempt failed - no interfaces in from_interfaces list!\n", feci);
 		goto ported_accel_bad_rule;
 	}
 
-	to_ifaces_first = ecm_db_connection_to_interfaces_get_and_ref(feci->ci, to_ifaces);
+	to_ifaces_first = ecm_db_connection_interfaces_get_and_ref(feci->ci, to_ifaces, ECM_DB_OBJ_DIR_TO);
 	if (to_ifaces_first == ECM_DB_IFACE_HEIRARCHY_MAX) {
 		DEBUG_WARN("%p: Accel attempt failed - no interfaces in to_interfaces list!\n", npci);
 		ecm_db_connection_interfaces_deref(from_ifaces, from_ifaces_first);
@@ -469,7 +469,7 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 #endif
 
 		ii = from_ifaces[list_index];
-		ii_type = ecm_db_connection_iface_type_get(ii);
+		ii_type = ecm_db_iface_type_get(ii);
 		ii_name = ecm_db_interface_type_to_string(ii_type);
 		DEBUG_TRACE("%p: list_index: %d, ii: %p, type: %d (%s)\n", npci, list_index, ii, ii_type, ii_name);
 
@@ -477,7 +477,6 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 		 * Extract information from this interface type if it is applicable to the rule.
 		 * Conflicting information may cause accel to be unsupported.
 		 */
-		vlan_value = 0;
 		switch (ii_type) {
 		case ECM_DB_IFACE_TYPE_BRIDGE:
 			DEBUG_TRACE("%p: Bridge\n", npci);
@@ -492,6 +491,25 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 			ecm_db_iface_bridge_address_get(ii, from_sfe_iface_address);
 			DEBUG_TRACE("%p: Bridge - mac: %pM\n", npci, from_sfe_iface_address);
 			break;
+
+		case ECM_DB_IFACE_TYPE_OVS_BRIDGE:
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+			DEBUG_TRACE("%p: OVS Bridge\n", npci);
+			if (interface_type_counts[ii_type] != 0) {
+				/*
+				 * Cannot cascade bridges
+				 */
+				rule_invalid = true;
+				DEBUG_TRACE("%p: OVS Bridge - ignore additional\n", npci);
+				break;
+			}
+			ecm_db_iface_ovs_bridge_address_get(ii, from_sfe_iface_address);
+			DEBUG_TRACE("%p: OVS Bridge - mac: %pM\n", npci, from_sfe_iface_address);
+#else
+			rule_invalid = true;
+#endif
+			break;
+
 		case ECM_DB_IFACE_TYPE_ETHERNET:
 			DEBUG_TRACE("%p: Ethernet\n", npci);
 			if (interface_type_counts[ii_type] != 0) {
@@ -637,7 +655,7 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 #endif
 
 		ii = to_ifaces[list_index];
-		ii_type = ecm_db_connection_iface_type_get(ii);
+		ii_type = ecm_db_iface_type_get(ii);
 		ii_name = ecm_db_interface_type_to_string(ii_type);
 		DEBUG_TRACE("%p: list_index: %d, ii: %p, type: %d (%s)\n", npci, list_index, ii, ii_type, ii_name);
 
@@ -645,7 +663,6 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 		 * Extract information from this interface type if it is applicable to the rule.
 		 * Conflicting information may cause accel to be unsupported.
 		 */
-		vlan_value = 0;
 		switch (ii_type) {
 		case ECM_DB_IFACE_TYPE_BRIDGE:
 			DEBUG_TRACE("%p: Bridge\n", npci);
@@ -660,6 +677,25 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 			ecm_db_iface_bridge_address_get(ii, to_sfe_iface_address);
 			DEBUG_TRACE("%p: Bridge - mac: %pM\n", npci, to_sfe_iface_address);
 			break;
+
+		case ECM_DB_IFACE_TYPE_OVS_BRIDGE:
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+			DEBUG_TRACE("%p: OVS Bridge\n", npci);
+			if (interface_type_counts[ii_type] != 0) {
+				/*
+				 * Cannot cascade bridges
+				 */
+				rule_invalid = true;
+				DEBUG_TRACE("%p: OVS Bridge - ignore additional\n", npci);
+				break;
+			}
+			ecm_db_iface_ovs_bridge_address_get(ii, to_sfe_iface_address);
+			DEBUG_TRACE("%p: OVS Bridge - mac: %pM\n", npci, to_sfe_iface_address);
+#else
+			rule_invalid = true;
+#endif
+			break;
+
 		case ECM_DB_IFACE_TYPE_ETHERNET:
 			DEBUG_TRACE("%p: Ethernet\n", npci);
 			if (interface_type_counts[ii_type] != 0) {
@@ -832,7 +868,7 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 	/*
 	 * The flow_ip is where the connection established from
 	 */
-	ecm_db_connection_from_address_get(feci->ci, addr);
+	ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, addr);
 	ECM_IP_ADDR_TO_NIN4_ADDR(nircm->tuple.flow_ip, addr);
 
 	/*
@@ -841,7 +877,7 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 	 * Getting the NAT'ed version here works for ingress or egress packets, for egress
 	 * the NAT'ed version would be the same as the normal address
 	 */
-	ecm_db_connection_to_address_nat_get(feci->ci, addr);
+	ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_TO_NAT, addr);
 	ECM_IP_ADDR_TO_NIN4_ADDR(nircm->tuple.return_ip, addr);
 
 	/*
@@ -849,37 +885,37 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 	 * packet should be translated to.  For egress this is the NAT'ed from address.
 	 * This also works for ingress as the NAT'ed version of the WAN host would be the same as non-NAT'ed
 	 */
-	ecm_db_connection_from_address_nat_get(feci->ci, addr);
+	ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM_NAT, addr);
 	ECM_IP_ADDR_TO_NIN4_ADDR(nircm->conn_rule.flow_ip_xlate, addr);
 
 	/*
 	 * The destination address is what the destination IP is translated to as it is forwarded to the next interface.
 	 * For egress this would yield the normal wan host and for ingress this would correctly NAT back to the LAN host
 	 */
-	ecm_db_connection_to_address_get(feci->ci, addr);
+	ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_TO, addr);
 	ECM_IP_ADDR_TO_NIN4_ADDR(nircm->conn_rule.return_ip_xlate, addr);
 
 	/*
 	 * Same approach as above for port information
 	 */
-	nircm->tuple.flow_ident = htons(ecm_db_connection_from_port_get(feci->ci));
-	nircm->tuple.return_ident = htons(ecm_db_connection_to_port_nat_get(feci->ci));
-	nircm->conn_rule.flow_ident_xlate = htons(ecm_db_connection_from_port_nat_get(feci->ci));
-	nircm->conn_rule.return_ident_xlate = htons(ecm_db_connection_to_port_get(feci->ci));
+	nircm->tuple.flow_ident = htons(ecm_db_connection_port_get(feci->ci, ECM_DB_OBJ_DIR_FROM));
+	nircm->tuple.return_ident = htons(ecm_db_connection_port_get(feci->ci, ECM_DB_OBJ_DIR_TO_NAT));
+	nircm->conn_rule.flow_ident_xlate = htons(ecm_db_connection_port_get(feci->ci, ECM_DB_OBJ_DIR_FROM_NAT));
+	nircm->conn_rule.return_ident_xlate = htons(ecm_db_connection_port_get(feci->ci, ECM_DB_OBJ_DIR_TO));
 
 	/*
 	 * Get mac addresses.
 	 * The src_mac is the mac address of the node that established the connection.
 	 * This will work whether the from_node is LAN (egress) or WAN (ingress).
 	 */
-	ecm_db_connection_from_node_address_get(feci->ci, (uint8_t *)nircm->conn_rule.flow_mac);
+	ecm_db_connection_node_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, (uint8_t *)nircm->conn_rule.flow_mac);
 
 	/*
 	 * The dest_mac is more complex.  For egress it is the node address of the 'to' side of the connection.
 	 * For ingress it is the node adress of the NAT'ed 'to' IP.
 	 * Essentially it is the MAC of node associated with create.dest_ip and this is "to nat" side.
 	 */
-	ecm_db_connection_to_nat_node_address_get(feci->ci, (uint8_t *)nircm->conn_rule.return_mac);
+	ecm_db_connection_node_address_get(feci->ci, ECM_DB_OBJ_DIR_TO_NAT, (uint8_t *)nircm->conn_rule.return_mac);
 
 	/*
 	 * The dest_mac_xlate is the mac address to replace the pkt.dst_mac when a packet is sent to->from
@@ -887,7 +923,7 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 	 * For routed connections this is the mac of the 'to' node side of the connection.
 	 */
 	if (ecm_db_connection_is_routed_get(feci->ci)) {
-		ecm_db_connection_to_node_address_get(feci->ci, dest_mac_xlate);
+		ecm_db_connection_node_address_get(feci->ci, ECM_DB_OBJ_DIR_TO, dest_mac_xlate);
 	} else {
 		/*
 		 * Bridge flows preserve the MAC addressing
@@ -909,8 +945,8 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 	/*
 	 * Get MTU information
 	 */
-	nircm->conn_rule.flow_mtu = (uint32_t)ecm_db_connection_from_iface_mtu_get(feci->ci);
-	nircm->conn_rule.return_mtu = (uint32_t)ecm_db_connection_to_iface_mtu_get(feci->ci);
+	nircm->conn_rule.flow_mtu = (uint32_t)ecm_db_connection_iface_mtu_get(feci->ci, ECM_DB_OBJ_DIR_FROM);
+	nircm->conn_rule.return_mtu = (uint32_t)ecm_db_connection_iface_mtu_get(feci->ci, ECM_DB_OBJ_DIR_TO);
 
 	if (protocol == IPPROTO_TCP) {
 		/*
@@ -927,7 +963,7 @@ static void ecm_sfe_ported_ipv4_connection_accelerate(struct ecm_front_end_conne
 			int flow_dir;
 			int return_dir;
 
-			ecm_db_connection_from_address_get(feci->ci, addr);
+			ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, addr);
 			ecm_front_end_flow_and_return_directions_get(ct, addr, 4, &flow_dir, &return_dir);
 
 			DEBUG_TRACE("%p: TCP Accel Get window data from ct %p for conn %p\n", npci, ct, feci->ci);
@@ -1281,52 +1317,19 @@ static void ecm_sfe_ported_ipv4_connection_destroy_callback(void *app_data, stru
 }
 
 /*
- * ecm_sfe_ported_ipv4_connection_decelerate()
- *	Decelerate a connection
+ * ecm_sfe_ported_ipv4_connection_decelerate_msg_send()
+ *	Prepares and sends a decelerate message to acceleration engine.
  */
-static void ecm_sfe_ported_ipv4_connection_decelerate(struct ecm_front_end_connection_instance *feci)
+static bool ecm_sfe_ported_ipv4_connection_decelerate_msg_send(struct ecm_front_end_connection_instance *feci)
 {
 	struct ecm_sfe_ported_ipv4_connection_instance *npci = (struct ecm_sfe_ported_ipv4_connection_instance *)feci;
 	struct sfe_ipv4_msg nim;
 	struct sfe_ipv4_rule_destroy_msg *nirdm;
 	ip_addr_t addr;
 	sfe_tx_status_t sfe_tx_status;
+	bool ret;
 
 	DEBUG_CHECK_MAGIC(npci, ECM_SFE_PORTED_IPV4_CONNECTION_INSTANCE_MAGIC, "%p: magic failed", npci);
-
-	/*
-	 * If decelerate is in error or already pending then ignore
-	 */
-	spin_lock_bh(&feci->lock);
-	if (feci->stats.decelerate_pending) {
-		spin_unlock_bh(&feci->lock);
-		return;
-	}
-
-	/*
-	 * If acceleration is pending then we cannot decelerate right now or we will race with it
-	 * Set a decelerate pending flag that will be actioned when the acceleration command is complete.
-	 */
-	if (feci->accel_mode == ECM_FRONT_END_ACCELERATION_MODE_ACCEL_PENDING) {
-		feci->stats.decelerate_pending = true;
-		spin_unlock_bh(&feci->lock);
-		return;
-	}
-
-	/*
-	 * Can only decelerate if accelerated
-	 * NOTE: This will also deny accel when the connection is in fail condition too.
-	 */
-	if (feci->accel_mode != ECM_FRONT_END_ACCELERATION_MODE_ACCEL) {
-		spin_unlock_bh(&feci->lock);
-		return;
-	}
-
-	/*
-	 * Initiate deceleration
-	 */
-	feci->accel_mode = ECM_FRONT_END_ACCELERATION_MODE_DECEL_PENDING;
-	spin_unlock_bh(&feci->lock);
 
 	/*
 	 * Increment the decel pending counter
@@ -1349,12 +1352,12 @@ static void ecm_sfe_ported_ipv4_connection_decelerate(struct ecm_front_end_conne
 	/*
 	 * Get addressing information
 	 */
-	ecm_db_connection_from_address_get(feci->ci, addr);
+	ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_FROM, addr);
 	ECM_IP_ADDR_TO_NIN4_ADDR(nirdm->tuple.flow_ip, addr);
-	ecm_db_connection_to_address_nat_get(feci->ci, addr);
+	ecm_db_connection_address_get(feci->ci, ECM_DB_OBJ_DIR_TO_NAT, addr);
 	ECM_IP_ADDR_TO_NIN4_ADDR(nirdm->tuple.return_ip, addr);
-	nirdm->tuple.flow_ident = htons(ecm_db_connection_from_port_get(feci->ci));
-	nirdm->tuple.return_ident = htons(ecm_db_connection_to_port_nat_get(feci->ci));
+	nirdm->tuple.flow_ident = htons(ecm_db_connection_port_get(feci->ci, ECM_DB_OBJ_DIR_FROM));
+	nirdm->tuple.return_ident = htons(ecm_db_connection_port_get(feci->ci, ECM_DB_OBJ_DIR_TO_NAT));
 
 	DEBUG_INFO("%p: Ported Connection %p decelerate\n"
 			"protocol: %d\n"
@@ -1388,25 +1391,18 @@ static void ecm_sfe_ported_ipv4_connection_decelerate(struct ecm_front_end_conne
 		spin_lock_bh(&feci->lock);
 		feci->stats.driver_fail = 0;
 		spin_unlock_bh(&feci->lock);
-		return;
+		return true;
 	}
+
+	/*
+	 * TX failed
+	 */
+	ret = ecm_front_end_destroy_failure_handle(feci);
 
 	/*
 	 * Release the ref take, SFE driver did not accept our command.
 	 */
 	ecm_db_connection_deref(feci->ci);
-
-	/*
-	 * TX failed
-	 */
-	spin_lock_bh(&feci->lock);
-	feci->stats.driver_fail_total++;
-	feci->stats.driver_fail++;
-	if (feci->stats.driver_fail >= feci->stats.driver_fail_limit) {
-		DEBUG_WARN("%p: Decel failed - driver fail limit\n", npci);
-		feci->accel_mode = ECM_FRONT_END_ACCELERATION_MODE_FAIL_DRIVER;
-	}
-	spin_unlock_bh(&feci->lock);
 
 	/*
 	 * Could not send the request, decrement the decel pending counter
@@ -1415,62 +1411,80 @@ static void ecm_sfe_ported_ipv4_connection_decelerate(struct ecm_front_end_conne
 	ecm_sfe_ipv4_pending_decel_count--;
 	DEBUG_ASSERT(ecm_sfe_ipv4_pending_decel_count >= 0, "Bad decel pending counter\n");
 	spin_unlock_bh(&ecm_sfe_ipv4_lock);
+
+	return ret;
+}
+
+/*
+ * ecm_sfe_ported_ipv4_connection_decelerate()
+ *     Decelerate a connection
+ */
+static bool ecm_sfe_ported_ipv4_connection_decelerate(struct ecm_front_end_connection_instance *feci)
+{
+	/*
+	 * Check if accel mode is OK for the deceleration.
+	 */
+	spin_lock_bh(&feci->lock);
+	if (!ecm_front_end_common_connection_decelerate_accel_mode_check(feci)) {
+		spin_unlock_bh(&feci->lock);
+		return false;
+	}
+	feci->accel_mode = ECM_FRONT_END_ACCELERATION_MODE_DECEL_PENDING;
+	spin_unlock_bh(&feci->lock);
+
+	return ecm_sfe_ported_ipv4_connection_decelerate_msg_send(feci);
 }
 
 /*
  * ecm_sfe_ported_ipv4_connection_defunct_callback()
  *	Callback to be called when a ported connection has become defunct.
  */
-static void ecm_sfe_ported_ipv4_connection_defunct_callback(void *arg)
+static bool ecm_sfe_ported_ipv4_connection_defunct_callback(void *arg, int *accel_mode)
 {
+	bool ret;
 	struct ecm_front_end_connection_instance *feci = (struct ecm_front_end_connection_instance *)arg;
 	struct ecm_sfe_ported_ipv4_connection_instance *npci = (struct ecm_sfe_ported_ipv4_connection_instance *)feci;
 
 	DEBUG_CHECK_MAGIC(npci, ECM_SFE_PORTED_IPV4_CONNECTION_INSTANCE_MAGIC, "%p: magic failed", npci);
 
 	spin_lock_bh(&feci->lock);
-
 	/*
-	 * If connection has already become defunct, do nothing.
+	 * Check if the connection can be defuncted.
 	 */
-	if (feci->is_defunct) {
+	if (!ecm_front_end_common_connection_defunct_check(feci)) {
+		*accel_mode = feci->accel_mode;
 		spin_unlock_bh(&feci->lock);
-		return;
-	}
-	feci->is_defunct = true;
-
-	/*
-	 * If the connection is already in one of the fail modes, do nothing, keep the current accel_mode.
-	 */
-	if (ECM_FRONT_END_ACCELERATION_FAILED(feci->accel_mode)) {
-		spin_unlock_bh(&feci->lock);
-		return;
+		return false;
 	}
 
 	/*
-	 * If the connection is decel then ensure it will not attempt accel while defunct.
-	 */
-	if (feci->accel_mode == ECM_FRONT_END_ACCELERATION_MODE_DECEL) {
-		feci->accel_mode = ECM_FRONT_END_ACCELERATION_MODE_FAIL_DEFUNCT;
-		spin_unlock_bh(&feci->lock);
-		return;
-	}
-
-	/*
-	 * If the connection is decel pending then decel operation is in progress anyway.
-	 */
-	if (feci->accel_mode == ECM_FRONT_END_ACCELERATION_MODE_DECEL_PENDING) {
-		spin_unlock_bh(&feci->lock);
-		return;
-	}
-
-	/*
-	 * If none of the cases matched above, this means the connection is in one of the
-	 * accel modes (accel or accel_pending) so we force a deceleration.
+	 * If none of the cases matched above, this means the connection is in the
+	 * accel mode, so we force a deceleration.
 	 * NOTE: If the mode is accel pending then the decel will be actioned when that is completed.
 	 */
+	if (!ecm_front_end_common_connection_decelerate_accel_mode_check(feci)) {
+		*accel_mode = feci->accel_mode;
+		spin_unlock_bh(&feci->lock);
+		return false;
+	}
+	feci->accel_mode = ECM_FRONT_END_ACCELERATION_MODE_DECEL_PENDING;
 	spin_unlock_bh(&feci->lock);
-	ecm_sfe_ported_ipv4_connection_decelerate(feci);
+
+	ret = ecm_sfe_ported_ipv4_connection_decelerate_msg_send(feci);
+
+	/*
+	 * Copy the accel_mode which is returned from the decelerate message function. This value
+	 * will be used in the caller to decide releasing the final reference of the connection.
+	 * But if this function reaches to here, the caller care about the ret. If ret is true,
+	 * the reference will be released regardless of the accel_mode. If ret is false, accel_mode
+	 * will be in the ACCEL state (for destroy re-try) and this state will not be used in the
+	 * caller's decision. It looks for ACCEL_FAIL states.
+	 */
+	spin_lock_bh(&feci->lock);
+	*accel_mode = feci->accel_mode;
+	spin_unlock_bh(&feci->lock);
+
+	return ret;
 }
 
 /*
@@ -1727,6 +1741,8 @@ static struct ecm_sfe_ported_ipv4_connection_instance *ecm_sfe_ported_ipv4_conne
 	 */
 	feci->ci = ci;
 
+	feci->ip_version = 4;
+
 	/*
 	 * Populate the methods and callbacks
 	 */
@@ -1740,6 +1756,8 @@ static struct ecm_sfe_ported_ipv4_connection_instance *ecm_sfe_ported_ipv4_conne
 	feci->state_get = ecm_sfe_ported_ipv4_connection_state_get;
 #endif
 	feci->ae_interface_number_by_dev_get = ecm_sfe_common_get_interface_number_by_dev;
+	feci->ae_interface_number_by_dev_type_get = ecm_sfe_common_get_interface_number_by_dev_type;
+	feci->ae_interface_type_get = ecm_sfe_common_get_interface_type;
 	feci->regenerate = ecm_sfe_common_connection_regenerate;
 
 	if (protocol == IPPROTO_TCP) {
@@ -1790,6 +1808,14 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 	__be16 *layer4hdr = NULL;
 
 	if (protocol == IPPROTO_TCP) {
+		/*
+		 * Check the conntrack status and the DSCP information.
+		 */
+		if (likely(ct) && !ecm_front_end_tcp_check_ct_and_fill_dscp(ct, iph, skb, sender)) {
+			DEBUG_WARN("%p: TCP Conntrack is not ready for acceleration\n", ct);
+			return NF_ACCEPT;
+		}
+
 		/*
 		 * Extract TCP header to obtain port information
 		 */
@@ -1859,6 +1885,15 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 				ECM_IP_ADDR_TO_DOT(ip_src_addr), ECM_IP_ADDR_TO_DOT(ip_src_addr_nat), src_port, src_port_nat, ECM_IP_ADDR_TO_DOT(ip_dest_addr),
 				ECM_IP_ADDR_TO_DOT(ip_dest_addr_nat), dest_port, dest_port_nat, ecm_dir);
 	} else if (protocol == IPPROTO_UDP) {
+		/*
+		 * Unconfirmed connection may be dropped by Linux at the final step,
+		 * So we don't allow acceleration for the unconfirmed connections.
+		 */
+		if (likely(ct) && !nf_ct_is_confirmed(ct)) {
+			DEBUG_WARN("%p: Unconfirmed connection\n", ct);
+			return NF_ACCEPT;
+		}
+
 		/*
 		 * Extract UDP header to obtain port information
 		 */
@@ -1946,14 +1981,8 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 	 * If there is no existing connection then create a new one.
 	 */
 	if (unlikely(!ci)) {
-		struct ecm_db_mapping_instance *src_mi;
-		struct ecm_db_mapping_instance *dest_mi;
-		struct ecm_db_mapping_instance *src_nat_mi;
-		struct ecm_db_mapping_instance *dest_nat_mi;
-		struct ecm_db_node_instance *src_ni;
-		struct ecm_db_node_instance *dest_ni;
-		struct ecm_db_node_instance *src_nat_ni;
-		struct ecm_db_node_instance *dest_nat_ni;
+		struct ecm_db_mapping_instance *mi[ECM_DB_OBJ_DIR_MAX];
+		struct ecm_db_node_instance *ni[ECM_DB_OBJ_DIR_MAX];
 		struct ecm_classifier_default_instance *dci;
 		struct ecm_db_connection_instance *nci;
 		ecm_classifier_type_t classifier_type;
@@ -2018,20 +2047,15 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 		 */
 		feci = (struct ecm_front_end_connection_instance *)ecm_sfe_ported_ipv4_connection_instance_alloc(nci, protocol, can_accel);
 		if (!feci) {
-			ecm_db_connection_deref(nci);
 			DEBUG_WARN("Failed to allocate front end\n");
-			return NF_ACCEPT;
+			goto fail_1;
 		}
 
 #ifdef CONFIG_XFRM
 		/*
 		 * Packet has been decrypted by ipsec, mark it in connection.
 		 */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0))
-		if (unlikely(skb_ext_exist(skb, SKB_EXT_SEC_PATH))) {
-#else
 		if (unlikely(skb->sp)) {
-#endif /*KERNEL_VERSION(5, 0, 0)*/
 			((struct ecm_sfe_ported_ipv4_connection_instance *)feci)->flow_ipsec_state = ECM_SFE_IPSEC_STATE_WAS_DECRYPTED;
 			((struct ecm_sfe_ported_ipv4_connection_instance *)feci)->return_ipsec_state = ECM_SFE_IPSEC_STATE_TO_ENCRYPT;
 		}
@@ -2041,10 +2065,8 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 							ip_src_addr, ip_src_addr_nat,
 							ip_dest_addr, ip_dest_addr_nat,
 							&efeici)) {
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
 			DEBUG_WARN("ECM front end ipv4 interface construct set failed for routed traffic\n");
-			return NF_ACCEPT;
+			goto fail_2;
 		}
 
 
@@ -2057,73 +2079,47 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 		DEBUG_TRACE("%p: Create the 'from' interface heirarchy list\n", nci);
 		from_list_first = ecm_interface_heirarchy_construct(feci, from_list, efeici.from_dev, efeici.from_other_dev, ip_dest_addr, efeici.from_mac_lookup_ip_addr, ip_src_addr, 4, protocol, in_dev, is_routed, in_dev, src_node_addr, dest_node_addr, layer4hdr, skb);
 		if (from_list_first == ECM_DB_IFACE_HEIRARCHY_MAX) {
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
 			DEBUG_WARN("Failed to obtain 'from' heirarchy list\n");
-			return NF_ACCEPT;
+			goto fail_3;
 		}
-		ecm_db_connection_from_interfaces_reset(nci, from_list, from_list_first);
+		ecm_db_connection_interfaces_reset(nci, from_list, from_list_first, ECM_DB_OBJ_DIR_FROM);
 
 		DEBUG_TRACE("%p: Create source node\n", nci);
-		src_ni = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.from_dev, efeici.from_mac_lookup_ip_addr, from_list, from_list_first, src_node_addr, skb);
+		ni[ECM_DB_OBJ_DIR_FROM] = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.from_dev, efeici.from_mac_lookup_ip_addr, from_list, from_list_first, src_node_addr, skb);
 		ecm_db_connection_interfaces_deref(from_list, from_list_first);
-		if (!src_ni) {
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+		if (!ni[ECM_DB_OBJ_DIR_FROM]) {
 			DEBUG_WARN("Failed to establish source node\n");
-			return NF_ACCEPT;
+			goto fail_3;
 		}
 
 		DEBUG_TRACE("%p: Create source mapping\n", nci);
-		src_mi = ecm_sfe_ipv4_mapping_establish_and_ref(ip_src_addr, src_port);
-		if (!src_mi) {
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+		mi[ECM_DB_OBJ_DIR_FROM] = ecm_sfe_ipv4_mapping_establish_and_ref(ip_src_addr, src_port);
+		if (!mi[ECM_DB_OBJ_DIR_FROM]) {
 			DEBUG_WARN("Failed to establish src mapping\n");
-			return NF_ACCEPT;
+			goto fail_4;
 		}
 
 		DEBUG_TRACE("%p: Create the 'to' interface heirarchy list\n", nci);
 		to_list_first = ecm_interface_heirarchy_construct(feci, to_list, efeici.to_dev, efeici.to_other_dev, ip_src_addr, efeici.to_mac_lookup_ip_addr, ip_dest_addr, 4, protocol, out_dev, is_routed, in_dev, dest_node_addr, src_node_addr, layer4hdr, skb);
 		if (to_list_first == ECM_DB_IFACE_HEIRARCHY_MAX) {
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
 			DEBUG_WARN("Failed to obtain 'to' heirarchy list\n");
-			return NF_ACCEPT;
+			goto fail_5;
 		}
-		ecm_db_connection_to_interfaces_reset(nci, to_list, to_list_first);
+		ecm_db_connection_interfaces_reset(nci, to_list, to_list_first, ECM_DB_OBJ_DIR_TO);
 
 		DEBUG_TRACE("%p: Create dest node\n", nci);
-		dest_ni = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.to_dev, efeici.to_mac_lookup_ip_addr, to_list, to_list_first, dest_node_addr, skb);
+		ni[ECM_DB_OBJ_DIR_TO] = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.to_dev, efeici.to_mac_lookup_ip_addr, to_list, to_list_first, dest_node_addr, skb);
 		ecm_db_connection_interfaces_deref(to_list, to_list_first);
-		if (!dest_ni) {
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+		if (!ni[ECM_DB_OBJ_DIR_TO]) {
 			DEBUG_WARN("Failed to establish dest node\n");
-			return NF_ACCEPT;
+			goto fail_5;
 		}
 
 		DEBUG_TRACE("%p: Create dest mapping\n", nci);
-		dest_mi = ecm_sfe_ipv4_mapping_establish_and_ref(ip_dest_addr, dest_port);
-		if (!dest_mi) {
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+		mi[ECM_DB_OBJ_DIR_TO] = ecm_sfe_ipv4_mapping_establish_and_ref(ip_dest_addr, dest_port);
+		if (!mi[ECM_DB_OBJ_DIR_TO]) {
 			DEBUG_WARN("Failed to establish dest mapping\n");
-			return NF_ACCEPT;
+			goto fail_6;
 		}
 
 		/*
@@ -2135,97 +2131,46 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 		DEBUG_TRACE("%p: Create the 'from NAT' interface heirarchy list\n", nci);
 		from_nat_list_first = ecm_interface_heirarchy_construct(feci, from_nat_list, efeici.from_nat_dev, efeici.from_nat_other_dev, ip_dest_addr, efeici.from_nat_mac_lookup_ip_addr, ip_src_addr_nat, 4, protocol, in_dev_nat, is_routed, in_dev_nat, src_node_addr_nat, dest_node_addr_nat, layer4hdr, skb);
 		if (from_nat_list_first == ECM_DB_IFACE_HEIRARCHY_MAX) {
-			ecm_db_mapping_deref(dest_mi);
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
 			DEBUG_WARN("Failed to obtain 'from NAT' heirarchy list\n");
-			return NF_ACCEPT;
+			goto fail_7;
 		}
-		ecm_db_connection_from_nat_interfaces_reset(nci, from_nat_list, from_nat_list_first);
+		ecm_db_connection_interfaces_reset(nci, from_nat_list, from_nat_list_first, ECM_DB_OBJ_DIR_FROM_NAT);
 
 		DEBUG_TRACE("%p: Create source nat node\n", nci);
-		src_nat_ni = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.from_nat_dev, efeici.from_nat_mac_lookup_ip_addr, from_nat_list, from_nat_list_first, src_node_addr_nat, skb);
+		ni[ECM_DB_OBJ_DIR_FROM_NAT] = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.from_nat_dev, efeici.from_nat_mac_lookup_ip_addr, from_nat_list, from_nat_list_first, src_node_addr_nat, skb);
 		ecm_db_connection_interfaces_deref(from_nat_list, from_nat_list_first);
-		if (!src_nat_ni) {
-			ecm_db_mapping_deref(dest_mi);
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+		if (!ni[ECM_DB_OBJ_DIR_FROM_NAT]) {
 			DEBUG_WARN("Failed to establish source nat node\n");
-			return NF_ACCEPT;
+			goto fail_7;
 		}
 
-		src_nat_mi = ecm_sfe_ipv4_mapping_establish_and_ref(ip_src_addr_nat, src_port_nat);
-		if (!src_nat_mi) {
-			ecm_db_node_deref(src_nat_ni);
-			ecm_db_mapping_deref(dest_mi);
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+		mi[ECM_DB_OBJ_DIR_FROM_NAT] = ecm_sfe_ipv4_mapping_establish_and_ref(ip_src_addr_nat, src_port_nat);
+		if (!mi[ECM_DB_OBJ_DIR_FROM_NAT]) {
 			DEBUG_WARN("Failed to establish src nat mapping\n");
-			return NF_ACCEPT;
+			goto fail_8;
 		}
 
 		DEBUG_TRACE("%p: Create the 'to NAT' interface heirarchy list\n", nci);
 		to_nat_list_first = ecm_interface_heirarchy_construct(feci, to_nat_list, efeici.to_nat_dev, efeici.to_nat_other_dev, ip_src_addr, efeici.to_nat_mac_lookup_ip_addr, ip_dest_addr_nat, 4, protocol, out_dev_nat, is_routed, in_dev, dest_node_addr_nat, src_node_addr_nat, layer4hdr, skb);
 		if (to_nat_list_first == ECM_DB_IFACE_HEIRARCHY_MAX) {
-			ecm_db_mapping_deref(src_nat_mi);
-			ecm_db_node_deref(src_nat_ni);
-			ecm_db_mapping_deref(dest_mi);
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
 			DEBUG_WARN("Failed to obtain 'to NAT' heirarchy list\n");
-			return NF_ACCEPT;
+			goto fail_9;
 		}
-		ecm_db_connection_to_nat_interfaces_reset(nci, to_nat_list, to_nat_list_first);
+		ecm_db_connection_interfaces_reset(nci, to_nat_list, to_nat_list_first, ECM_DB_OBJ_DIR_TO_NAT);
 
 		DEBUG_TRACE("%p: Create dest nat node\n", nci);
-		dest_nat_ni = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.to_nat_dev, efeici.to_nat_mac_lookup_ip_addr, to_nat_list, to_nat_list_first, dest_node_addr_nat, skb);
+		ni[ECM_DB_OBJ_DIR_TO_NAT] = ecm_sfe_ipv4_node_establish_and_ref(feci, efeici.to_nat_dev, efeici.to_nat_mac_lookup_ip_addr, to_nat_list, to_nat_list_first, dest_node_addr_nat, skb);
 
 		ecm_db_connection_interfaces_deref(to_nat_list, to_nat_list_first);
-		if (!dest_nat_ni) {
-			ecm_db_mapping_deref(src_nat_mi);
-			ecm_db_node_deref(src_nat_ni);
-			ecm_db_mapping_deref(dest_mi);
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
-			ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+		if (!ni[ECM_DB_OBJ_DIR_TO_NAT]) {
 			DEBUG_WARN("Failed to establish dest nat node\n");
-			return NF_ACCEPT;
+			goto fail_9;
 		}
 
-		ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
-
-		dest_nat_mi = ecm_sfe_ipv4_mapping_establish_and_ref(ip_dest_addr_nat, dest_port_nat);
-		if (!dest_nat_mi) {
-			ecm_db_node_deref(dest_nat_ni);
-			ecm_db_mapping_deref(src_nat_mi);
-			ecm_db_node_deref(src_nat_ni);
-			ecm_db_mapping_deref(dest_mi);
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
+		mi[ECM_DB_OBJ_DIR_TO_NAT] = ecm_sfe_ipv4_mapping_establish_and_ref(ip_dest_addr_nat, dest_port_nat);
+		if (!mi[ECM_DB_OBJ_DIR_TO_NAT]) {
 			DEBUG_WARN("Failed to establish dest mapping\n");
-			return NF_ACCEPT;
+			goto fail_10;
 		}
 
 		/*
@@ -2233,18 +2178,8 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 		 */
 		dci = ecm_classifier_default_instance_alloc(nci, protocol, ecm_dir, src_port, dest_port);
 		if (!dci) {
-			ecm_db_mapping_deref(dest_nat_mi);
-			ecm_db_node_deref(dest_nat_ni);
-			ecm_db_mapping_deref(src_nat_mi);
-			ecm_db_node_deref(src_nat_ni);
-			ecm_db_mapping_deref(dest_mi);
-			ecm_db_node_deref(dest_ni);
-			ecm_db_mapping_deref(src_mi);
-			ecm_db_node_deref(src_ni);
-			feci->deref(feci);
-			ecm_db_connection_deref(nci);
 			DEBUG_WARN("Failed to allocate default classifier\n");
-			return NF_ACCEPT;
+			goto fail_11;
 		}
 		ecm_db_connection_classifier_assign(nci, (struct ecm_classifier_instance *)dci);
 
@@ -2257,19 +2192,8 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 			if (aci) {
 				aci->deref(aci);
 			} else {
-				dci->base.deref((struct ecm_classifier_instance *)dci);
-				ecm_db_mapping_deref(dest_nat_mi);
-				ecm_db_node_deref(dest_nat_ni);
-				ecm_db_mapping_deref(src_nat_mi);
-				ecm_db_node_deref(src_nat_ni);
-				ecm_db_mapping_deref(dest_mi);
-				ecm_db_node_deref(dest_ni);
-				ecm_db_mapping_deref(src_mi);
-				ecm_db_node_deref(src_ni);
-				feci->deref(feci);
-				ecm_db_connection_deref(nci);
 				DEBUG_WARN("Failed to allocate classifiers assignments\n");
-				return NF_ACCEPT;
+				goto fail_12;
 			}
 		}
 
@@ -2308,8 +2232,7 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 			 * Add the new connection we created into the database
 			 * NOTE: assign to a short timer group for now - it is the assigned classifiers responsibility to do this
 			 */
-			ecm_db_connection_add(nci, src_mi, dest_mi, src_nat_mi, dest_nat_mi,
-					src_ni, dest_ni, src_nat_ni, dest_nat_ni,
+			ecm_db_connection_add(nci, mi, ni,
 					4, protocol, ecm_dir,
 					NULL /* final callback */,
 					ecm_sfe_ported_ipv4_connection_defunct_callback,
@@ -2325,15 +2248,45 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 		 * No longer need referenecs to the objects we created
 		 */
 		dci->base.deref((struct ecm_classifier_instance *)dci);
-		ecm_db_mapping_deref(dest_nat_mi);
-		ecm_db_node_deref(dest_nat_ni);
-		ecm_db_mapping_deref(src_nat_mi);
-		ecm_db_node_deref(src_nat_ni);
-		ecm_db_mapping_deref(dest_mi);
-		ecm_db_node_deref(dest_ni);
-		ecm_db_mapping_deref(src_mi);
-		ecm_db_node_deref(src_ni);
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_TO_NAT]);
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_TO_NAT]);
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_FROM_NAT]);
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_FROM_NAT]);
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_TO]);
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_TO]);
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_FROM]);
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_FROM]);
+		ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
 		feci->deref(feci);
+
+		goto done;
+fail_12:
+		dci->base.deref((struct ecm_classifier_instance *)dci);
+fail_11:
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_TO_NAT]);
+fail_10:
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_TO_NAT]);
+fail_9:
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_FROM_NAT]);
+fail_8:
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_FROM_NAT]);
+fail_7:
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_TO]);
+fail_6:
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_TO]);
+fail_5:
+		ecm_db_mapping_deref(mi[ECM_DB_OBJ_DIR_FROM]);
+fail_4:
+		ecm_db_node_deref(ni[ECM_DB_OBJ_DIR_FROM]);
+fail_3:
+		ecm_front_end_ipv4_interface_construct_netdev_put(&efeici);
+fail_2:
+		feci->deref(feci);
+fail_1:
+		ecm_db_connection_deref(nci);
+		return NF_ACCEPT;
+done:
+		;
 	}
 
 	/*
@@ -2349,7 +2302,7 @@ unsigned int ecm_sfe_ported_ipv4_process(struct net_device *out_dev, struct net_
 	 * NOTE: This may be different than what sender is at the moment
 	 * given the connection we have located.
 	 */
-	ecm_db_connection_from_address_get(ci, match_addr);
+	ecm_db_connection_address_get(ci, ECM_DB_OBJ_DIR_FROM, match_addr);
 	if (ECM_IP_ADDR_MATCH(ip_src_addr, match_addr)) {
 		sender = ECM_TRACKER_SENDER_TYPE_SRC;
 	} else {

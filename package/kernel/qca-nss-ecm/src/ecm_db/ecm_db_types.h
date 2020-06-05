@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014,2015,2017-2020 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -105,6 +105,25 @@ typedef void (*ecm_db_iface_listener_removed_callback_t)(void *arg, struct ecm_d
 #define ECM_DB_CONNECTION_SDP_TIMEOUT 120
 #define ECM_DB_CONNECTION_SIP_TIMEOUT 28800
 #define ECM_DB_CONNECTION_BITTORRENT_TIMEOUT 120
+#define ECM_DB_CONNECTION_DEFUNCT_RETRY_TIMEOUT 5
+
+/*
+ * ECM database object direction.
+ */
+enum ecm_db_obj_dir {
+	ECM_DB_OBJ_DIR_FROM,
+	ECM_DB_OBJ_DIR_TO,
+	ECM_DB_OBJ_DIR_FROM_NAT,
+	ECM_DB_OBJ_DIR_TO_NAT,
+	ECM_DB_OBJ_DIR_MAX
+};
+typedef enum ecm_db_obj_dir ecm_db_obj_dir_t;
+
+/*
+ * Extern decleration of common array that maps
+ * the object direction to a string.
+ */
+extern char *ecm_db_obj_dir_strings[ECM_DB_OBJ_DIR_MAX];
 
 /*
  * Timer groups.
@@ -135,10 +154,16 @@ enum ecm_db_timer_groups {
 	ECM_DB_TIMER_GROUPS_CONNECTION_SIP_TIMEOUT,		/* SIP timeout */
 	ECM_DB_TIMER_GROUPS_CONNECTION_IGMP_TIMEOUT,		/* IGMP timeout */
 	ECM_DB_TIMER_GROUPS_CONNECTION_BITTORRENT_TIMEOUT,	/* Bittorrent connections timeout */
+	ECM_DB_TIMER_GROUPS_CONNECTION_DEFUNCT_RETRY_TIMEOUT,	/* Defunct retry timeout */
 	ECM_DB_TIMER_GROUPS_MAX					/* Always the last one */
 };
 typedef enum ecm_db_timer_groups ecm_db_timer_group_t;
 typedef void (*ecm_db_timer_group_entry_callback_t)(void *arg);	/* Timer entry has expired */
+
+/*
+ * Ignore IP version check in connection instance
+ */
+#define ECM_DB_IP_VERSION_IGNORE 0
 
 #ifdef ECM_MULTICAST_ENABLE
 
@@ -220,7 +245,7 @@ typedef void (*ecm_db_connection_final_callback_t)(void *arg);		/* Finaliser cal
 /*
  * Connection defunct event
  */
-typedef void (*ecm_db_connection_defunct_callback_t)(void *arg);	/* Defunct callback */
+typedef bool (*ecm_db_connection_defunct_callback_t)(void *arg, int *accel_mode);	/* Defunct callback */
 
 /*
  * Device Type for IPSec Tunnel devices
@@ -244,6 +269,12 @@ enum ecm_db_iface_types {
 	ECM_DB_IFACE_TYPE_PPPOL2TPV2,			/* Interface is a PPPoL2TPV2 interface (a specific form of PPP that we recognise in the ECM) */
 	ECM_DB_IFACE_TYPE_PPTP,				/* Interface is a PPTP interface */
 	ECM_DB_IFACE_TYPE_MAP_T,			/* Interface is a MAP-T interface */
+	ECM_DB_IFACE_TYPE_GRE_TUN,			/* Interface is a GRE TUN tunnel interface */
+	ECM_DB_IFACE_TYPE_GRE_TAP,			/* Interface is a GRE TAP tunnel interface */
+	ECM_DB_IFACE_TYPE_RAWIP,			/* Interface is a RAWIP interface */
+	ECM_DB_IFACE_TYPE_OVPN,				/* Interface is a OVPN interface */
+	ECM_DB_IFACE_TYPE_VXLAN,			/* Interface is a VxLAN interface */
+	ECM_DB_IFACE_TYPE_OVS_BRIDGE,			/* Interface is a OpenvSwitch bridge interface */
 	ECM_DB_IFACE_TYPE_COUNT,			/* Number of interface types */
 };
 typedef enum ecm_db_iface_types ecm_db_iface_type_t;
@@ -254,6 +285,13 @@ typedef enum ecm_db_iface_types ecm_db_iface_type_t;
 struct ecm_db_interface_info_ethernet {			/* type == ECM_DB_IFACE_TYPE_ETHERNET */
 	uint8_t address[ETH_ALEN];			/* MAC Address of this Interface */
 };
+
+#ifdef ECM_INTERFACE_VXLAN_ENABLE
+struct ecm_db_interface_info_vxlan {			/* type == ECM_DB_IFACE_TYPE_VXLAN */
+	uint32_t vni;					/* VxLAN network identifier */
+	uint32_t if_type;				/* VxLAN interface type */
+};
+#endif
 
 #ifdef ECM_INTERFACE_VLAN_ENABLE
 struct ecm_db_interface_info_vlan {			/* type == ECM_DB_IFACE_TYPE_VLAN */
@@ -272,6 +310,12 @@ struct ecm_db_interface_info_lag {			/* type == ECM_DB_IFACE_TYPE_LAG */
 struct ecm_db_interface_info_bridge {			/* type == ECM_DB_IFACE_TYPE_BRIDGE */
 	uint8_t address[ETH_ALEN];			/* MAC Address of this Interface */
 };
+
+#ifdef ECM_INTERFACE_OVS_BRIDGE_ENABLE
+struct ecm_db_interface_info_ovs_bridge {		/* type == ECM_DB_IFACE_TYPE_OVS_BRIDGE */
+	uint8_t address[ETH_ALEN];			/* MAC Address of this Interface */
+};
+#endif
 
 #ifdef ECM_INTERFACE_PPPOE_ENABLE
 struct ecm_db_interface_info_pppoe {			/* type == ECM_DB_IFACE_TYPE_PPPOE */
@@ -316,7 +360,14 @@ struct ecm_db_interface_info_pptp {
 struct ecm_db_interface_info_map_t {                  /* type == ECM_DB_IFACE_TYPE_MAP_T */
 	int32_t if_index;
 };
+#endif
 
+#ifdef ECM_INTERFACE_GRE_TUN_ENABLE
+struct ecm_db_interface_info_gre_tun {			/* type == ECM_DB_IFACE_TYPE_GRE_TUN */
+	int32_t if_index;
+	ip_addr_t local_ip;
+	ip_addr_t remote_ip;
+};
 #endif
 
 struct ecm_db_interface_info_unknown {			/* type == ECM_DB_IFACE_TYPE_UNKNOWN */
@@ -336,10 +387,6 @@ struct ecm_db_interface_info_ipsec_tunnel {		/* type == ECM_DB_IFACE_TYPE_IPSEC_
 
 #ifdef ECM_INTERFACE_SIT_ENABLE
 struct ecm_db_interface_info_sit {			/* type == ECM_DB_IFACE_TYPE_SIT */
-	uint32_t prefix[4];				/* 6rd prefix */
-	uint32_t relay_prefix;				/* Relay prefix */
-	uint16_t prefixlen;				/* 6rd prefix len */
-	uint16_t relay_prefixlen;			/* Relay prefix length*/
 	ip_addr_t saddr;				/* Tunnel source address */
 	ip_addr_t daddr;				/* Tunnel destination addresss */
 	uint8_t  tos;					/* Tunnel tos field */
@@ -356,6 +403,19 @@ struct ecm_db_interface_info_tunipip6 {			/* type == ECM_DB_IFACE_TYPE_TUNIPIP6 
 	uint8_t  hop_limit;				/* Tunnel ipv6 hop limit */
 };
 #endif
+
+#ifdef ECM_INTERFACE_RAWIP_ENABLE
+struct ecm_db_interface_info_rawip {			/* type == ECM_DB_IFACE_TYPE_RAWIP */
+	uint8_t address[ETH_ALEN];			/* TODO: Random MAC Address generated by kernel */
+};
+#endif
+
+#ifdef ECM_INTERFACE_OVPN_ENABLE
+struct ecm_db_interface_info_ovpn {			/* type == ECM_DB_IFACE_TYPE_OVPN */
+	int32_t tun_ifnum;				/* Tunnel interface number */
+};
+#endif
+
 /*
  * Interface Heirarchy
  * Each connection instance keeps four lists of interfaces.
@@ -383,7 +443,7 @@ struct ecm_db_interface_info_tunipip6 {			/* type == ECM_DB_IFACE_TYPE_TUNIPIP6 
  */
 static inline struct ecm_db_iface_instance *ecm_db_multicast_if_heirarchy_get(struct ecm_db_iface_instance *heirarchy_base, uint32_t index)
 {
-	uint32_t *heirarchy_instance = (uint32_t *)heirarchy_base;
+	unsigned long *heirarchy_instance = (unsigned long *)heirarchy_base;
 	DEBUG_ASSERT(heirarchy_instance, "Bad memory, multicast interfaces list has been already freed\n");
 	DEBUG_ASSERT((index <= ECM_DB_MULTICAST_IF_MAX), "Bad index %u\n", index);
 	return (struct ecm_db_iface_instance *)(heirarchy_instance + (index * ECM_DB_IFACE_HEIRARCHY_MAX));
@@ -395,10 +455,10 @@ static inline struct ecm_db_iface_instance *ecm_db_multicast_if_heirarchy_get(st
  */
 static inline struct ecm_db_iface_instance *ecm_db_multicast_if_instance_get_at_index(struct ecm_db_iface_instance *heirarchy_start, uint32_t index)
 {
-	uint32_t *iface_instance = (uint32_t *)heirarchy_start;
+	unsigned long *iface_instance = (unsigned long *)heirarchy_start;
 	DEBUG_ASSERT(iface_instance, "Bad memory, multicast interfaces list has been already freed\n");
 	DEBUG_ASSERT((index <= ECM_DB_IFACE_HEIRARCHY_MAX), "Bad first %u\n", index);
-	return ((struct ecm_db_iface_instance *)(iface_instance + index));
+	return (struct ecm_db_iface_instance *)(iface_instance + index);
 }
 
 /*
@@ -428,7 +488,7 @@ static inline int32_t *ecm_db_multicast_if_num_get_at_index(int32_t *if_num, uin
  */
 static inline void ecm_db_multicast_copy_if_heirarchy(struct ecm_db_iface_instance *if_hr[], struct ecm_db_iface_instance *heirarchy_start)
 {
-	uint32_t *iface_instance = (uint32_t *)heirarchy_start;
+	unsigned long *iface_instance = (unsigned long *)heirarchy_start;
 	struct ecm_db_iface_instance **heirarchy;
 	int i;
 

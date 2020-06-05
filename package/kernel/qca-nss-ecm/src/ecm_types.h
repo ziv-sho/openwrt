@@ -1,6 +1,6 @@
 /*
  **************************************************************************
- * Copyright (c) 2014-2015 The Linux Foundation.  All rights reserved.
+ * Copyright (c) 2014-2015, 2019 The Linux Foundation.  All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -17,6 +17,15 @@
 #define ECM_TYPES_H_
 
 #include <linux/printk.h>
+
+/*
+ * Flow/Return direction types.
+ */
+enum ecm_conn_dir {
+	ECM_CONN_DIR_FLOW,
+	ECM_CONN_DIR_RETURN,
+	ECM_CONN_DIR_MAX
+};
 
 /*
  * The ECM IP address is an array of 4 32 bit numbers.
@@ -192,10 +201,10 @@ static inline void ecm_type_check_ae_ipv6(uint32_t ip6[4]){}
 	{ \
 		ecm_type_check_ecm_ip_addr(ipaddrt); \
 		ecm_type_check_linux_ipv6(hin6); \
-		ipaddrt[0] = in6.in6_u.u6_addr32[0]; \
-		ipaddrt[1] = in6.in6_u.u6_addr32[1]; \
-		ipaddrt[2] = in6.in6_u.u6_addr32[2]; \
-		ipaddrt[3] = in6.in6_u.u6_addr32[3]; \
+		ipaddrt[0] = hin6.in6_u.u6_addr32[3]; \
+		ipaddrt[1] = hin6.in6_u.u6_addr32[2]; \
+		ipaddrt[2] = hin6.in6_u.u6_addr32[1]; \
+		ipaddrt[3] = hin6.in6_u.u6_addr32[0]; \
 	}
 
 /*
@@ -205,10 +214,10 @@ static inline void ecm_type_check_ae_ipv6(uint32_t ip6[4]){}
 	{ \
 		ecm_type_check_linux_ipv6(hin6); \
 		ecm_type_check_ecm_ip_addr(ipaddrt); \
-		in6.in6_u.u6_addr32[3] = ipaddrt[3]; \
-		in6.in6_u.u6_addr32[2] = ipaddrt[2]; \
-		in6.in6_u.u6_addr32[1] = ipaddrt[1]; \
-		in6.in6_u.u6_addr32[0] = ipaddrt[0]; \
+		hin6.in6_u.u6_addr32[0] = ipaddrt[3]; \
+		hin6.in6_u.u6_addr32[1] = ipaddrt[2]; \
+		hin6.in6_u.u6_addr32[2] = ipaddrt[1]; \
+		hin6.in6_u.u6_addr32[3] = ipaddrt[0]; \
 	}
 #endif
 
