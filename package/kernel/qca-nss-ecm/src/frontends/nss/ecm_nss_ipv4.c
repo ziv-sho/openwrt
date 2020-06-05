@@ -2256,7 +2256,9 @@ sync_conntrack:
 	}
 
 	ct = nf_ct_tuplehash_to_ctrack(h);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
 	NF_CT_ASSERT(ct->timeout.data == (unsigned long)ct);
+#endif /*KERNEL_VERSION(4, 9, 0)*/
 	DEBUG_TRACE("%p: NSS Sync: conntrack connection\n", ct);
 
 	ecm_front_end_flow_and_return_directions_get(ct, flow_ip, 4, &flow_dir, &return_dir);
@@ -2267,7 +2269,11 @@ sync_conntrack:
 	 */
 	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
 		spin_lock_bh(&ct->lock);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
+		ct->timeout += delta_jiffies;
+#else
 		ct->timeout.expires += delta_jiffies;
+#endif /*KERNEL_VERSION(4, 9, 0)*/
 		spin_unlock_bh(&ct->lock);
 	}
 
@@ -2325,17 +2331,25 @@ sync_conntrack:
 			u_int64_t reply_pkts = atomic64_read(&acct[IP_CT_DIR_REPLY].packets);
 
 			if (reply_pkts != 0) {
-				struct nf_conntrack_l4proto *l4proto;
 				unsigned int *timeouts;
 
 				set_bit(IPS_SEEN_REPLY_BIT, &ct->status);
 				set_bit(IPS_ASSURED_BIT, &ct->status);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
+				timeouts = nf_ct_timeout_lookup(ct);
+#else
+				struct nf_conntrack_l4proto *l4proto;
 
 				l4proto = __nf_ct_l4proto_find(AF_INET, IPPROTO_UDP);
 				timeouts = nf_ct_timeout_lookup(&init_net, ct, l4proto);
+#endif /*KERNEL_VERSION(4, 19, 0)*/
 
 				spin_lock_bh(&ct->lock);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0))
+				ct->timeout = jiffies + timeouts[UDP_CT_REPLIED];
+#else
 				ct->timeout.expires = jiffies + timeouts[UDP_CT_REPLIED];
+#endif /*KERNEL_VERSION(4, 9, 0)*/
 				spin_unlock_bh(&ct->lock);
 			}
 		}
@@ -2852,7 +2866,7 @@ int ecm_nss_ipv4_init(struct dentry *dentry)
 	/*
 	 * Register netfilter hooks
 	 */
-	result = nf_register_hooks(ecm_nss_ipv4_netfilter_hooks, ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
+	result = nf_register_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks, ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 	if (result < 0) {
 		DEBUG_ERROR("Can't register netfilter hooks.\n");
 		nss_ipv4_notify_unregister();
@@ -2864,7 +2878,7 @@ int ecm_nss_ipv4_init(struct dentry *dentry)
 	if (result < 0) {
 		DEBUG_ERROR("Failed to init ecm ipv4 multicast frontend\n");
 		nss_ipv4_notify_unregister();
-		nf_unregister_hooks(ecm_nss_ipv4_netfilter_hooks,
+		nf_unregister_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks,
 				ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 		goto task_cleanup;
 	}
@@ -2876,7 +2890,7 @@ int ecm_nss_ipv4_init(struct dentry *dentry)
 #ifdef ECM_MULTICAST_ENABLE
 		ecm_nss_multicast_ipv4_exit();
 #endif
-		nf_unregister_hooks(ecm_nss_ipv4_netfilter_hooks,
+		nf_unregister_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks,
 				ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 		goto task_cleanup;
 	}
@@ -2907,7 +2921,7 @@ void ecm_nss_ipv4_exit(void)
 	/*
 	 * Stop the network stack hooks
 	 */
-	nf_unregister_hooks(ecm_nss_ipv4_netfilter_hooks,
+	nf_unregister_net_hooks(&init_net, ecm_nss_ipv4_netfilter_hooks,
 			    ARRAY_SIZE(ecm_nss_ipv4_netfilter_hooks));
 
 	/*
