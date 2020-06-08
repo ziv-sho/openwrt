@@ -43,7 +43,7 @@ define Build/InstallDev
 	$(CP) $(PKG_BUILD_DIR)/exports/* $(1)/usr/include/qca-nss-drv/
 endef
 
-EXTRA_CFLAGS+= -I$(STAGING_DIR)/usr/include/qca-nss-gmac -I$(STAGING_DIR)/usr/include/qca-nss-dp
+EXTRA_CFLAGS+= -I$(STAGING_DIR)/usr/include/qca-nss-gmac
 
 ifeq ($(CONFIG_TARGET_ipq806x),y)
 subtarget:=ipq806x

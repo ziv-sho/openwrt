@@ -428,6 +428,7 @@ static int nss_rps_cfg_handler(struct ctl_table *ctl, int write,
 
 	for (i = 0; i < nss_top_main.num_nss; i++) {
 		nss_ctx = &nss_top->nss[i];
+		pr_warn("Enabling NSS RPS\n");
 		nss_info("Enabling NSS RPS\n");
 		ret_rps = nss_rps_cfg(nss_ctx, 1);
 
