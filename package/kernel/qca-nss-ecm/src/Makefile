@@ -71,7 +71,7 @@ endif
 # sfe as ECM's front end.
 # #############################################################################
 ifeq ($(SoC),$(filter $(SoC),ipq806x ipq40xx))
-ECM_FRONT_END_SFE_ENABLE=n
+ECM_FRONT_END_SFE_ENABLE=y
 ecm-$(ECM_FRONT_END_SFE_ENABLE) += frontends/sfe/ecm_sfe_ipv4.o
 ecm-$(ECM_FRONT_END_SFE_ENABLE) += frontends/sfe/ecm_sfe_ported_ipv4.o
 ccflags-$(ECM_FRONT_END_SFE_ENABLE) += -DECM_FRONT_END_SFE_ENABLE
