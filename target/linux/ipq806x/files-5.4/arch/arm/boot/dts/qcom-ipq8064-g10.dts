@@ -348,7 +348,6 @@
 	qcom,forced-duplex = <1>;
 	qcom,socver = <0>;
 	qcom,irq = <255>;
-	local-mac-address = [00 00 00 00 00 00];
 	mdiobus = <&mdio0>;
 
 	pinctrl-0 = <&rgmii2_pins>;
@@ -378,7 +377,6 @@
 	qcom,forced-duplex = <1>;
 	qcom,socver = <0>;
 	qcom,irq = <258>;
-	local-mac-address = [00 00 00 00 00 00];
 	mdiobus = <&mdio0>;
 
 	fixed-link {
