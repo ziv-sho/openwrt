@@ -42,7 +42,8 @@ define KernelPackage/qca-nss-ecm/Default
 	+TARGET_ipq_ipq60xx_64:kmod-qca-nss-drv \
 	+TARGET_ipq_ipq50xx:kmod-qca-nss-drv \
 	+TARGET_ipq_ipq50xx_64:kmod-qca-nss-drv \
-	+iptables-mod-extra +kmod-ipt-conntrack \
+	+iptables-mod-extra +iptables-mod-physdev \
+	+kmod-ipt-conntrack \
 	+kmod-pppoe @!LINUX_3_18 \
 	+PACKAGE_kmod-qca-ovsmgr:kmod-qca-ovsmgr \
 	+kmod-ipsec
