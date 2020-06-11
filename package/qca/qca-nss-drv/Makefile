@@ -106,6 +106,9 @@ DRV_MAKE_OPTS+=NSS_DRV_C2C_ENABLE=n \
         NSS_DRV_VXLAN_ENABLE=n
 endif
 
+# Disable fab scaling
+EXTRA_CFLAGS+= -DNSS_FABRIC_SCALING_SUPPORT=0
+
 define Build/Configure
 	$(LN) arch/nss_$(subtarget).h $(PKG_BUILD_DIR)/exports/nss_arch.h
 endef
