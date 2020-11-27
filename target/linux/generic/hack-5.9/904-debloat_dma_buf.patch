@@ -62,7 +62,7 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
 +MODULE_LICENSE("GPL");
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
-@@ -3053,6 +3053,7 @@ int wake_up_state(struct task_struct *p,
+@@ -3058,6 +3058,7 @@ int wake_up_state(struct task_struct *p,
  {
  	return try_to_wake_up(p, state, 0);
  }
