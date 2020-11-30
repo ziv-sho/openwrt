@@ -10,10 +10,10 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mac80211
 
-PKG_VERSION:=5.8-1
-PKG_RELEASE:=2
-PKG_SOURCE_URL:=@KERNEL/linux/kernel/projects/backports/stable/v5.8/
-PKG_HASH:=19b4174d89bf11ee221458e11f1e8dace26558498774b823051156f522d2036b
+PKG_VERSION:=5.8.18-test2
+PKG_RELEASE:=1
+PKG_SOURCE_URL:=https://hauke-m.de/files/backports-test/
+PKG_HASH:=8bbb49a25b7138eae3a3557915264b0cb6ccc81bdfbc663f707f242e03fdf5a7
 
 PKG_SOURCE:=backports-$(PKG_VERSION).tar.xz
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/backports-$(PKG_VERSION)
