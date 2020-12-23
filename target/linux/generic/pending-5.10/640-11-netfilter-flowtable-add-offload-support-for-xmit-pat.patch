@@ -66,6 +66,8 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
 -	nud_state = n->nud_state;
 -	ether_addr_copy(ha, n->ha);
 -	read_unlock_bh(&n->lock);
+-
+-	if (!(nud_state & NUD_VALID)) {
 +	if (flow->tuplehash[dir].tuple.xmit_type == FLOW_OFFLOAD_XMIT_DIRECT) {
 +		ether_addr_copy(ha, flow->tuplehash[dir].tuple.out.h_dest);
 +	} else {
@@ -73,8 +75,7 @@ Signed-off-by: Felix Fietkau <nbd@nbd.name>
 +		n = dst_neigh_lookup(dst_cache, daddr);
 +		if (!n)
 +			return -ENOENT;
- 
--	if (!(nud_state & NUD_VALID)) {
++
 +		read_lock_bh(&n->lock);
 +		nud_state = n->nud_state;
 +		ether_addr_copy(ha, n->ha);
