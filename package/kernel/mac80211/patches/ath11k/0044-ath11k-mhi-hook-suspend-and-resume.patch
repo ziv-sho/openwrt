@@ -1,0 +1,54 @@
+From 34fb81e4eb924f73f0b0428c6c8fd3b2b44c518c Mon Sep 17 00:00:00 2001
+From: Carl Huang <cjhuang@codeaurora.org>
+Date: Fri, 11 Dec 2020 19:35:41 +0200
+Subject: [PATCH 44/87] ath11k: mhi: hook suspend and resume
+
+MHI suspend and resume isn't hooked in ath11k yet, so hook these
+functions needed for suspend support.
+
+Tested-on: QCA6390 hw2.0 PCI WLAN.HST.1.0.1-01740-QCAHSTSWPLZ_V2_TO_X86-1
+
+Signed-off-by: Carl Huang <cjhuang@codeaurora.org>
+Signed-off-by: Kalle Valo <kvalo@codeaurora.org>
+Link: https://lore.kernel.org/r/1607708150-21066-2-git-send-email-kvalo@codeaurora.org
+---
+ drivers/net/wireless/ath/ath11k/mhi.c | 11 +++++++++++
+ drivers/net/wireless/ath/ath11k/mhi.h |  3 +++
+ 2 files changed, 14 insertions(+)
+
+--- a/drivers/net/wireless/ath/ath11k/mhi.c
++++ b/drivers/net/wireless/ath/ath11k/mhi.c
+@@ -419,8 +419,10 @@ static int ath11k_mhi_set_state(struct a
+ 		ret = 0;
+ 		break;
+ 	case ATH11K_MHI_SUSPEND:
++		ret = mhi_pm_suspend(ab_pci->mhi_ctrl);
+ 		break;
+ 	case ATH11K_MHI_RESUME:
++		ret = mhi_pm_resume(ab_pci->mhi_ctrl);
+ 		break;
+ 	case ATH11K_MHI_TRIGGER_RDDM:
+ 		ret = mhi_force_rddm_mode(ab_pci->mhi_ctrl);
+@@ -471,3 +473,12 @@ void ath11k_mhi_stop(struct ath11k_pci *
+ 	ath11k_mhi_set_state(ab_pci, ATH11K_MHI_DEINIT);
+ }
+ 
++void ath11k_mhi_suspend(struct ath11k_pci *ab_pci)
++{
++	ath11k_mhi_set_state(ab_pci, ATH11K_MHI_SUSPEND);
++}
++
++void ath11k_mhi_resume(struct ath11k_pci *ab_pci)
++{
++	ath11k_mhi_set_state(ab_pci, ATH11K_MHI_RESUME);
++}
+--- a/drivers/net/wireless/ath/ath11k/mhi.h
++++ b/drivers/net/wireless/ath/ath11k/mhi.h
+@@ -36,4 +36,7 @@ void ath11k_mhi_unregister(struct ath11k
+ void ath11k_mhi_set_mhictrl_reset(struct ath11k_base *ab);
+ void ath11k_mhi_clear_vector(struct ath11k_base *ab);
+ 
++void ath11k_mhi_suspend(struct ath11k_pci *ar_pci);
++void ath11k_mhi_resume(struct ath11k_pci *ar_pci);
++
+ #endif

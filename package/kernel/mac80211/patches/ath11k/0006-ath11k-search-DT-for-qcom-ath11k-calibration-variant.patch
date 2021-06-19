@@ -1,7 +1,7 @@
-From da4ccc477bb46cc518991828ae8ac79e856f92ab Mon Sep 17 00:00:00 2001
+From 14f43c5fca57810e7a3788468aee482c85ab37a6 Mon Sep 17 00:00:00 2001
 From: Sven Eckelmann <sven@narfation.org>
 Date: Thu, 15 Oct 2020 15:15:01 +0200
-Subject: [PATCH] ath11k: search DT for qcom,ath11k-calibration-variant
+Subject: [PATCH 06/87] ath11k: search DT for qcom,ath11k-calibration-variant
 
 Board Data File (BDF) is loaded upon driver boot-up procedure. The right
 board data file is identified on IPQ6018 using bus, qmi-chip-id and

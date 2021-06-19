@@ -1,7 +1,7 @@
 From cf8480d338a1b9156121e5e035e6b9721db4332a Mon Sep 17 00:00:00 2001
 From: Karthikeyan Periyasamy <periyasa@codeaurora.org>
 Date: Mon, 11 Jan 2021 19:49:30 +0200
-Subject: ath11k: remove duplicate function declaration
+Subject: [PATCH 64/87] ath11k: remove duplicate function declaration
 
 Removed the duplicated peer related function declaration
 from core.h since those functions are already declared in peer.h
@@ -19,7 +19,7 @@ Link: https://lore.kernel.org/r/1608304793-20612-1-git-send-email-periyasa@codea
 
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -868,14 +868,6 @@ extern const struct service_to_pipe ath1
+@@ -875,14 +875,6 @@ extern const struct service_to_pipe ath1
  extern const struct ce_pipe_config ath11k_target_ce_config_wlan_qca6390[];
  extern const struct service_to_pipe ath11k_target_service_to_ce_map_wlan_qca6390[];
  

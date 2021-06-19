@@ -1,7 +1,7 @@
 From 4b965be536eefdd16ca0a88120fee23f5b92cd16 Mon Sep 17 00:00:00 2001
 From: Karthikeyan Periyasamy <periyasa@codeaurora.org>
 Date: Mon, 8 Feb 2021 13:32:11 +0200
-Subject: ath11k: Update tx descriptor search index properly
+Subject: [PATCH 68/87] ath11k: Update tx descriptor search index properly
 
 Tx descriptor search index field should be updated with hw peer id
 and not by AST Hash as per the HW/FW recommendation. Incorrect search
@@ -28,7 +28,7 @@ Link: https://lore.kernel.org/r/1612410960-9120-1-git-send-email-periyasa@codeau
 
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -193,6 +193,7 @@ struct ath11k_vif {
+@@ -200,6 +200,7 @@ struct ath11k_vif {
  	u32 beacon_interval;
  	u32 dtim_period;
  	u16 ast_hash;
@@ -38,7 +38,7 @@ Link: https://lore.kernel.org/r/1612410960-9120-1-git-send-email-periyasa@codeau
  	u8 search_type;
 --- a/drivers/net/wireless/ath/ath11k/dp_rx.c
 +++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
-@@ -1648,6 +1648,7 @@ void ath11k_dp_htt_htc_t2h_msg_handler(s
+@@ -1670,6 +1670,7 @@ void ath11k_dp_htt_htc_t2h_msg_handler(s
  	u8 mac_addr[ETH_ALEN];
  	u16 peer_mac_h16;
  	u16 ast_hash;
@@ -46,7 +46,7 @@ Link: https://lore.kernel.org/r/1612410960-9120-1-git-send-email-periyasa@codeau
  
  	ath11k_dbg(ab, ATH11K_DBG_DP_HTT, "dp_htt rx msg type :0x%0x\n", type);
  
-@@ -1668,7 +1669,7 @@ void ath11k_dp_htt_htc_t2h_msg_handler(s
+@@ -1690,7 +1691,7 @@ void ath11k_dp_htt_htc_t2h_msg_handler(s
  					 resp->peer_map_ev.info1);
  		ath11k_dp_get_mac_addr(resp->peer_map_ev.mac_addr_l32,
  				       peer_mac_h16, mac_addr);
@@ -55,7 +55,7 @@ Link: https://lore.kernel.org/r/1612410960-9120-1-git-send-email-periyasa@codeau
  		break;
  	case HTT_T2H_MSG_TYPE_PEER_MAP2:
  		vdev_id = FIELD_GET(HTT_T2H_PEER_MAP_INFO_VDEV_ID,
-@@ -1681,7 +1682,10 @@ void ath11k_dp_htt_htc_t2h_msg_handler(s
+@@ -1703,7 +1704,10 @@ void ath11k_dp_htt_htc_t2h_msg_handler(s
  				       peer_mac_h16, mac_addr);
  		ast_hash = FIELD_GET(HTT_T2H_PEER_MAP_INFO2_AST_HASH_VAL,
  				     resp->peer_map_ev.info2);

@@ -1,0 +1,138 @@
+From bb2d2dfd3c93cd5b26535694a46450c0c3d21bb1 Mon Sep 17 00:00:00 2001
+From: Tom Rix <trix@redhat.com>
+Date: Thu, 28 Jan 2021 06:49:28 -0800
+Subject: [PATCH 67/87] ath11k: remove h from printk format specifier
+
+This change fixes the checkpatch warning described in this commit
+commit cbacb5ab0aa0 ("docs: printk-formats: Stop encouraging use of
+  unnecessary %h[xudi] and %hh[xudi]")
+
+Standard integer promotion is already done and %hx and %hhx is useless
+so do not encourage the use of %hh[xudi] or %h[xudi].
+
+Signed-off-by: Tom Rix <trix@redhat.com>
+Signed-off-by: Kalle Valo <kvalo@codeaurora.org>
+Link: https://lore.kernel.org/r/20210128144928.2557605-1-trix@redhat.com
+---
+ drivers/net/wireless/ath/ath11k/dp_rx.c | 10 +++++-----
+ drivers/net/wireless/ath/ath11k/mac.c   | 10 +++++-----
+ drivers/net/wireless/ath/ath11k/trace.h |  2 +-
+ drivers/net/wireless/ath/ath11k/wmi.c   |  4 ++--
+ 4 files changed, 13 insertions(+), 13 deletions(-)
+
+--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
+@@ -1310,7 +1310,7 @@ int ath11k_dp_htt_tlv_iter(struct ath11k
+ 		len -= sizeof(*tlv);
+ 
+ 		if (tlv_len > len) {
+-			ath11k_err(ab, "htt tlv parse failure of tag %hhu at byte %zd (%zu bytes left, %hhu expected)\n",
++			ath11k_err(ab, "htt tlv parse failure of tag %u at byte %zd (%zu bytes left, %u expected)\n",
+ 				   tlv_tag, ptr - begin, len, tlv_len);
+ 			return -EINVAL;
+ 		}
+@@ -1399,22 +1399,22 @@ ath11k_update_per_peer_tx_stats(struct a
+ 	 */
+ 
+ 	if (flags == WMI_RATE_PREAMBLE_HE && mcs > 11) {
+-		ath11k_warn(ab, "Invalid HE mcs %hhd peer stats",  mcs);
++		ath11k_warn(ab, "Invalid HE mcs %d peer stats",  mcs);
+ 		return;
+ 	}
+ 
+ 	if (flags == WMI_RATE_PREAMBLE_HE && mcs > ATH11K_HE_MCS_MAX) {
+-		ath11k_warn(ab, "Invalid HE mcs %hhd peer stats",  mcs);
++		ath11k_warn(ab, "Invalid HE mcs %d peer stats",  mcs);
+ 		return;
+ 	}
+ 
+ 	if (flags == WMI_RATE_PREAMBLE_VHT && mcs > ATH11K_VHT_MCS_MAX) {
+-		ath11k_warn(ab, "Invalid VHT mcs %hhd peer stats",  mcs);
++		ath11k_warn(ab, "Invalid VHT mcs %d peer stats",  mcs);
+ 		return;
+ 	}
+ 
+ 	if (flags == WMI_RATE_PREAMBLE_HT && (mcs > ATH11K_HT_MCS_MAX || nss < 1)) {
+-		ath11k_warn(ab, "Invalid HT mcs %hhd nss %hhd peer stats",
++		ath11k_warn(ab, "Invalid HT mcs %d nss %d peer stats",
+ 			    mcs, nss);
+ 		return;
+ 	}
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -4856,7 +4856,7 @@ static int ath11k_mac_op_add_chanctx(str
+ 	struct ath11k_base *ab = ar->ab;
+ 
+ 	ath11k_dbg(ab, ATH11K_DBG_MAC,
+-		   "mac chanctx add freq %hu width %d ptr %pK\n",
++		   "mac chanctx add freq %u width %d ptr %pK\n",
+ 		   ctx->def.chan->center_freq, ctx->def.width, ctx);
+ 
+ 	mutex_lock(&ar->conf_mutex);
+@@ -4880,7 +4880,7 @@ static void ath11k_mac_op_remove_chanctx
+ 	struct ath11k_base *ab = ar->ab;
+ 
+ 	ath11k_dbg(ab, ATH11K_DBG_MAC,
+-		   "mac chanctx remove freq %hu width %d ptr %pK\n",
++		   "mac chanctx remove freq %u width %d ptr %pK\n",
+ 		   ctx->def.chan->center_freq, ctx->def.width, ctx);
+ 
+ 	mutex_lock(&ar->conf_mutex);
+@@ -5124,7 +5124,7 @@ ath11k_mac_update_vif_chan(struct ath11k
+ 		arvif = (void *)vifs[i].vif->drv_priv;
+ 
+ 		ath11k_dbg(ab, ATH11K_DBG_MAC,
+-			   "mac chanctx switch vdev_id %i freq %hu->%hu width %d->%d\n",
++			   "mac chanctx switch vdev_id %i freq %u->%u width %d->%d\n",
+ 			   arvif->vdev_id,
+ 			   vifs[i].old_ctx->def.chan->center_freq,
+ 			   vifs[i].new_ctx->def.chan->center_freq,
+@@ -5221,7 +5221,7 @@ static void ath11k_mac_op_change_chanctx
+ 	mutex_lock(&ar->conf_mutex);
+ 
+ 	ath11k_dbg(ab, ATH11K_DBG_MAC,
+-		   "mac chanctx change freq %hu width %d ptr %pK changed %x\n",
++		   "mac chanctx change freq %u width %d ptr %pK changed %x\n",
+ 		   ctx->def.chan->center_freq, ctx->def.width, ctx, changed);
+ 
+ 	/* This shouldn't really happen because channel switching should use
+@@ -5590,7 +5590,7 @@ static int ath11k_mac_set_fixed_rate_par
+ 
+ 	lockdep_assert_held(&ar->conf_mutex);
+ 
+-	ath11k_dbg(ar->ab, ATH11K_DBG_MAC, "mac set fixed rate params vdev %i rate 0x%02hhx nss %hhu sgi %hhu\n",
++	ath11k_dbg(ar->ab, ATH11K_DBG_MAC, "mac set fixed rate params vdev %i rate 0x%02x nss %u sgi %u\n",
+ 		   arvif->vdev_id, rate, nss, sgi);
+ 
+ 	vdev_param = WMI_VDEV_PARAM_FIXED_RATE;
+--- a/drivers/net/wireless/ath/ath11k/trace.h
++++ b/drivers/net/wireless/ath/ath11k/trace.h
+@@ -43,7 +43,7 @@ TRACE_EVENT(ath11k_htt_pktlog,
+ 	),
+ 
+ 	TP_printk(
+-		"%s %s size %hu pktlog_checksum %d",
++		"%s %s size %u pktlog_checksum %d",
+ 		__get_str(driver),
+ 		__get_str(device),
+ 		__entry->buf_len,
+--- a/drivers/net/wireless/ath/ath11k/wmi.c
++++ b/drivers/net/wireless/ath/ath11k/wmi.c
+@@ -169,7 +169,7 @@ ath11k_wmi_tlv_iter(struct ath11k_base *
+ 		len -= sizeof(*tlv);
+ 
+ 		if (tlv_len > len) {
+-			ath11k_err(ab, "wmi tlv parse failure of tag %hhu at byte %zd (%zu bytes left, %hhu expected)\n",
++			ath11k_err(ab, "wmi tlv parse failure of tag %u at byte %zd (%zu bytes left, %u expected)\n",
+ 				   tlv_tag, ptr - begin, len, tlv_len);
+ 			return -EINVAL;
+ 		}
+@@ -177,7 +177,7 @@ ath11k_wmi_tlv_iter(struct ath11k_base *
+ 		if (tlv_tag < ARRAY_SIZE(wmi_tlv_policies) &&
+ 		    wmi_tlv_policies[tlv_tag].min_len &&
+ 		    wmi_tlv_policies[tlv_tag].min_len > tlv_len) {
+-			ath11k_err(ab, "wmi tlv parse failure of tag %hhu at byte %zd (%hhu bytes is less than min length %zu)\n",
++			ath11k_err(ab, "wmi tlv parse failure of tag %u at byte %zd (%u bytes is less than min length %zu)\n",
+ 				   tlv_tag, ptr - begin, tlv_len,
+ 				   wmi_tlv_policies[tlv_tag].min_len);
+ 			return -EINVAL;

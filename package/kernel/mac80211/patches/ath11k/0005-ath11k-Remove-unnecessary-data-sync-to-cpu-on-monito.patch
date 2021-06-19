@@ -1,0 +1,32 @@
+From bafdbd79aae4c91f38caa43e5fb7abfd911f5bf6 Mon Sep 17 00:00:00 2001
+From: Vasanthakumar Thiagarajan <vthiagar@codeaurora.org>
+Date: Thu, 15 Oct 2020 12:17:34 +0530
+Subject: [PATCH 05/87] ath11k: Remove unnecessary data sync to cpu on monitor
+ buffer
+
+Monitor ring Rx buffer is not really modified between dma map
+and unmap. So remove the unnecssary data sync before dma unmap.
+This does not fix any visible issue, found in code review.
+
+Compile tested only.
+
+Signed-off-by: Vasanthakumar Thiagarajan <vthiagar@codeaurora.org>
+Signed-off-by: Kalle Valo <kvalo@codeaurora.org>
+Link: https://lore.kernel.org/r/1602744454-22969-1-git-send-email-vthiagar@codeaurora.org
+---
+ drivers/net/wireless/ath/ath11k/dp_rx.c | 4 ----
+ 1 file changed, 4 deletions(-)
+
+--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
+@@ -2878,10 +2878,6 @@ static int ath11k_dp_rx_reap_mon_status_
+ 
+ 			rxcb = ATH11K_SKB_RXCB(skb);
+ 
+-			dma_sync_single_for_cpu(ab->dev, rxcb->paddr,
+-						skb->len + skb_tailroom(skb),
+-						DMA_FROM_DEVICE);
+-
+ 			dma_unmap_single(ab->dev, rxcb->paddr,
+ 					 skb->len + skb_tailroom(skb),
+ 					 DMA_BIDIRECTIONAL);
