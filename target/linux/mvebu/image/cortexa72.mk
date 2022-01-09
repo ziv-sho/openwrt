@@ -52,6 +52,15 @@ define Device/marvell_macchiatobin-singleshot
 endef
 TARGET_DEVICES += marvell_macchiatobin-singleshot
 
+define Device/mikrotik_rb5009
+  $(call Device/Default-arm64)
+  DEVICE_VENDOR := MikroTik
+  DEVICE_MODEL := RB5009
+  SOC := armada-7040
+  DEVICE_PACKAGES += kmod-i2c-gpio
+endef
+TARGET_DEVICES += mikrotik_rb5009
+
 define Device/iei_puzzle-m901
   $(call Device/Default-arm64)
   DEVICE_VENDOR := iEi
