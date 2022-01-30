@@ -54,9 +54,14 @@ TARGET_DEVICES += marvell_macchiatobin-singleshot
 
 define Device/mikrotik_rb5009
   $(call Device/Default-arm64)
+  $(call Device/FitImage)
+  $(call Device/UbiFit)
   DEVICE_VENDOR := MikroTik
   DEVICE_MODEL := RB5009
   SOC := armada-7040
+  KERNEL_LOADADDR := 0x7000000
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
   DEVICE_PACKAGES += kmod-i2c-gpio
 endef
 TARGET_DEVICES += mikrotik_rb5009
