@@ -106,7 +106,7 @@
 
 				hard_config {
 					read-only;
-					size = <0x2000>;
+					size = <0x1000>;
 				};
 
 				soft_config {
