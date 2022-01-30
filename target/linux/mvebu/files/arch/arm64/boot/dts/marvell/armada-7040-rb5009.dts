@@ -256,6 +256,7 @@
 				label = "p1";
 				phy-mode = "sgmii";
 				managed = "in-band-status";
+				phy-handle = <&qca8081>;
 			};
 
 			port@a {
@@ -297,6 +298,16 @@
 
 			switch0phy7: switch0phy7@7 {
 				reg = <0x7>;
+			};
+		};
+
+		mdio1 {
+			compatible = "marvell,mv88e6xxx-mdio-external";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			qca8081: qca8081@0 {
+				reg = <0>;
 			};
 		};
 	};
