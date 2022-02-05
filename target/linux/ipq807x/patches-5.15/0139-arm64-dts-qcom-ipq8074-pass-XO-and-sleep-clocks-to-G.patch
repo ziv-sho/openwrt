@@ -1,0 +1,37 @@
+From a07e275fd7c3e780c3666e306ac5634a80e2fdc6 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robimarko@gmail.com>
+Date: Sun, 30 Oct 2022 13:59:00 +0100
+Subject: [PATCH] arm64: dts: qcom: ipq8074: pass XO and sleep clocks to GCC
+
+Pass XO and sleep clocks to the GCC controller so it does not have to
+find them by matching globaly by name.
+
+If not passed directly, driver maintains backwards compatibility by then
+falling back to global lookup.
+
+Signed-off-by: Robert Marko <robimarko@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/ipq8074.dtsi | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/ipq8074.dtsi b/arch/arm64/boot/dts/qcom/ipq8074.dtsi
+index dcea8ec6a160..4b99357a02e8 100644
+--- a/arch/arm64/boot/dts/qcom/ipq8074.dtsi
++++ b/arch/arm64/boot/dts/qcom/ipq8074.dtsi
+@@ -438,9 +438,11 @@ qpic_pins: qpic-pins {
+ 		gcc: gcc@1800000 {
+ 			compatible = "qcom,gcc-ipq8074";
+ 			reg = <0x01800000 0x80000>;
+-			#clock-cells = <0x1>;
++			clocks = <&xo>, <&sleep_clk>;
++			clock-names = "xo", "sleep_clk";
++			#clock-cells = <1>;
+ 			#power-domain-cells = <1>;
+-			#reset-cells = <0x1>;
++			#reset-cells = <1>;
+ 		};
+ 
+ 		tcsr_mutex: hwlock@1905000 {
+-- 
+2.38.1
+
