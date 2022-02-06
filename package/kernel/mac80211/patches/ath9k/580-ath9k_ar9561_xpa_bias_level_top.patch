@@ -1,6 +1,6 @@
 --- a/drivers/net/wireless/ath/ath9k/ar9003_eeprom.c
 +++ b/drivers/net/wireless/ath/ath9k/ar9003_eeprom.c
-@@ -3604,10 +3604,13 @@ static void ar9003_hw_xpa_bias_level_app
+@@ -3605,10 +3605,13 @@ static void ar9003_hw_xpa_bias_level_app
  {
  	int bias = ar9003_modal_header(ah, is2ghz)->xpaBiasLvl;
  
