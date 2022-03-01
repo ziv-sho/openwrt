@@ -2433,7 +2433,6 @@ static int
 ar8xxx_phy_config_init(struct phy_device *phydev)
 {
 	struct ar8xxx_priv *priv = phydev->priv;
-	struct net_device *dev = phydev->attached_dev;
 	int ret;
 
 	if (WARN_ON(!priv))
