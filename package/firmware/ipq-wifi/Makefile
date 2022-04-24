@@ -26,6 +26,7 @@ endef
 
 ALLWIFIBOARDS:= \
 	devolo_magic-2-wifi-next \
+	dynalink_dl-wrx36 \
 	edgecore_eap102 \
 	edgecore_ecw5410 \
 	edgecore_oap100 \
@@ -114,6 +115,7 @@ endef
 # Add $(eval $(call generate-ipq-wifi-package,<devicename>,<display name>))
 
 $(eval $(call generate-ipq-wifi-package,devolo_magic-2-wifi-next,devolo Magic 2 WiFi next))
+$(eval $(call generate-ipq-wifi-package,dynalink_dl-wrx36,Dynalink DL-WRX36))
 $(eval $(call generate-ipq-wifi-package,edgecore_eap102,Edgecore EAP102))
 $(eval $(call generate-ipq-wifi-package,edgecore_ecw5410,Edgecore ECW5410))
 $(eval $(call generate-ipq-wifi-package,edgecore_oap100,Edgecore OAP100))

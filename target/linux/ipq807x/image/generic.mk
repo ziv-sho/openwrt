@@ -98,3 +98,16 @@ define Device/xiaomi_ax9000
 	DEVICE_PACKAGES := ipq-wifi-xiaomi_ax9000 kmod-ath10k-ct ath10k-firmware-qca9887-ct
 endef
 TARGET_DEVICES += xiaomi_ax9000
+
+define Device/dynalink_dl-wrx36
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Dynalink
+	DEVICE_MODEL := DL-WRX36
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	DEVICE_DTS_CONFIG := config@rt5010w-d350-rev0
+	SOC := ipq8072
+	DEVICE_PACKAGES := ipq-wifi-dynalink_dl-wrx36
+endef
+TARGET_DEVICES += dynalink_dl-wrx36
