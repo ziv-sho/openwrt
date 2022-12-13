@@ -1,0 +1,24 @@
+From 4dfa067d67fce061e27208bb69d98394d79829b5 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robimarko@gmail.com>
+Date: Fri, 16 Dec 2022 10:20:40 +0100
+Subject: [PATCH] ath11k: print FW memory mode on boot
+
+Currently, its impossible to know the FW memory mode that is being used
+if the driver crashes, so lets print it for debug purposes.
+
+Signed-off-by: Robert Marko <robimarko@gmail.com>
+---
+ drivers/net/wireless/ath/ath11k/qmi.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/drivers/net/wireless/ath/ath11k/qmi.c
++++ b/drivers/net/wireless/ath/ath11k/qmi.c
+@@ -3248,6 +3248,8 @@ int ath11k_qmi_init_service(struct ath11
+ 	memset(&ab->qmi.target_mem, 0, sizeof(struct target_mem_chunk));
+ 	ab->qmi.ab = ab;
+ 
++	ath11k_info(ab, "fw_mem_mode: %d\n", ab->hw_params.fw_mem_mode);
++
+ 	ab->qmi.target_mem_mode = ab->hw_params.fw_mem_mode;
+ 	ret = qmi_handle_init(&ab->qmi.handle, ATH11K_QMI_RESP_LEN_MAX,
+ 			      &ath11k_qmi_ops, ath11k_qmi_msg_handlers);
