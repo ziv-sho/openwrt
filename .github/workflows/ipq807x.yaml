@@ -47,6 +47,18 @@ jobs:
                 make -j$(nproc) V=s || \
                 make V=s
 
+            - name: Install SSH Key
+              uses: shimataro/ssh-key-action@v2
+              with:
+                key: ${{ secrets.SSH_PRIVATE_KEY }}
+                known_hosts: unnecessary
+
+            - name: Adding known hosts
+              run: ssh-keyscan -H ${{ secrets.SSH_HOST }}  >> ~/.ssh/known_hosts
+
+            - name: Push nonshared packages to feed
+              run: rsync -avzr --delete bin/targets/ipq807x/generic/ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/ubuntu/openwrt-feed
+
             - name: Remove packages
               run: rm -rf bin/targets/ipq807x/generic/packages
 
