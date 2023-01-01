@@ -17,9 +17,15 @@ define Device/UbiFit
 	IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
 endef
 
+define Device/IfnameMigration
+	DEVICE_COMPAT_VERSION := 1.1
+	DEVICE_COMPAT_MESSAGE := Network interface names have changed
+endef
+
 define Device/dynalink_dl-wrx36
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
+	$(call Device/IfnameMigration)
 	DEVICE_VENDOR := Dynalink
 	DEVICE_MODEL := DL-WRX36
 	BLOCKSIZE := 128k
@@ -47,6 +53,7 @@ TARGET_DEVICES += edgecore_eap102
 define Device/edimax_cax1800
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
+	$(call Device/IfnameMigration)
 	DEVICE_VENDOR := Edimax
 	DEVICE_MODEL := CAX1800
 	BLOCKSIZE := 128k
@@ -59,6 +66,7 @@ TARGET_DEVICES += edimax_cax1800
 
 define Device/qnap_301w
 	$(call Device/FitImage)
+	$(call Device/IfnameMigration)
 	DEVICE_VENDOR := QNAP
 	DEVICE_MODEL := 301w
 	DEVICE_DTS_CONFIG := config@hk01
@@ -74,6 +82,7 @@ TARGET_DEVICES += qnap_301w
 
 define Device/redmi_ax6
 	$(call Device/xiaomi_ax3600)
+	$(call Device/IfnameMigration)
 	DEVICE_VENDOR := Redmi
 	DEVICE_MODEL := AX6
 	DEVICE_PACKAGES := ipq-wifi-redmi_ax6
@@ -83,6 +92,7 @@ TARGET_DEVICES += redmi_ax6
 define Device/xiaomi_ax3600
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
+	$(call Device/IfnameMigration)
 	DEVICE_VENDOR := Xiaomi
 	DEVICE_MODEL := AX3600
 	BLOCKSIZE := 128k
@@ -96,6 +106,7 @@ TARGET_DEVICES += xiaomi_ax3600
 define Device/xiaomi_ax9000
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
+	$(call Device/IfnameMigration)
 	DEVICE_VENDOR := Xiaomi
 	DEVICE_MODEL := AX9000
 	BLOCKSIZE := 128k

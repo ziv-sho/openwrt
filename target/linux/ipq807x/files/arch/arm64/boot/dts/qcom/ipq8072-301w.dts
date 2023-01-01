@@ -731,6 +731,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_16>;
 		phy-mode = "sgmii";
+		label = "lan4";
 	};
 
 	dp2: dp2 {
@@ -742,6 +743,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_17>;
 		phy-mode = "sgmii";
+		label = "lan3";
 	};
 
 	dp3: dp3 {
@@ -753,6 +755,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_18>;
 		phy-mode = "sgmii";
+		label = "lan2";
 	};
 
 	dp4: dp4 {
@@ -764,6 +767,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_19>;
 		phy-mode = "sgmii";
+		label = "lan1";
 	};
 
 	dp5: dp5 {
@@ -775,6 +779,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&aqr113c_8>;
 		phy-mode = "sgmii";
+		label = "10g-1";
 	};
 
 	dp6: dp6 {
@@ -786,6 +791,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&aqr113c_0>;
 		phy-mode = "sgmii";
+		label = "10g-2";
 	};
 };
 
