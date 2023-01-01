@@ -438,6 +438,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_1>;
 		phy-mode = "sgmii";
+		label = "wan";
 	};
 
 	dp3: dp3 {
@@ -449,6 +450,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_2>;
 		phy-mode = "sgmii";
+		label = "lan1";
 	};
 
 	dp4: dp4 {
@@ -460,6 +462,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_3>;
 		phy-mode = "sgmii";
+		label = "lan2";
 	};
 
 	dp5: dp5 {
@@ -471,6 +474,7 @@
 		local-mac-address = [000000000000];
 		phy-handle = <&qca8075_4>;
 		phy-mode = "sgmii";
+		label = "lan3";
 	};
 };
 
