@@ -22,6 +22,13 @@ define Device/IfnameMigration
 	DEVICE_COMPAT_MESSAGE := Network interface names have changed
 endef
 
+define Device/partition-layout-migration
+  DEVICE_COMPAT_VERSION := 2.0
+  DEVICE_COMPAT_MESSAGE := *** Partition layout has changed from earlier \
+	versions. You need to reinstall the firmware from UART or a migration \
+	initramfs image. Settings will be lost. ***
+endef
+
 define Device/dynalink_dl-wrx36
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
@@ -92,7 +99,7 @@ TARGET_DEVICES += redmi_ax6
 define Device/xiaomi_ax3600
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
-	$(call Device/IfnameMigration)
+	$(call Device/partition-layout-migration)
 	DEVICE_VENDOR := Xiaomi
 	DEVICE_MODEL := AX3600
 	BLOCKSIZE := 128k
@@ -111,7 +118,7 @@ TARGET_DEVICES += xiaomi_ax3600
 define Device/xiaomi_ax9000
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
-	$(call Device/IfnameMigration)
+	$(call Device/partition-layout-migration)
 	DEVICE_VENDOR := Xiaomi
 	DEVICE_MODEL := AX9000
 	BLOCKSIZE := 128k
