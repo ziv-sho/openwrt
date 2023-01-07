@@ -15,7 +15,6 @@ permissions:
 
 jobs:
   build-macos-latest:
-    if: github.event_name != 'push'
     runs-on: macos-latest
 
     steps:
